@@ -1,0 +1,45 @@
+# Configuration folders
+config/
+Config/
+# Configuration files
+appsettings.json
+appsettings.*.json
+*.secrets.json
+*.env
+*.config
+secrets.json
+*.local.json
+*.local.config
+# .gitignore for TSHOCK_Metatron
+# Build outputs
+bin/
+obj/
+publish/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Rider/JetBrains
+.idea/
+*.iml
+
+# NuGet
+*.nupkg
+.nuget/
+
+# Others
+*.swp
+*.tmp
