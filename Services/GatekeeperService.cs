@@ -190,8 +190,11 @@ public class GatekeeperService
             if (account == null)
             {
                 string tempPass = Guid.NewGuid().ToString("N").Substring(0, 10);
-                // USING TSHOCK NATIVE HASHER
-                account = new UserAccount(player.Name, TShock.Utils.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                
+                // FIX: Use TShock's native, internal BCrypt library directly.
+                string hashedPassword = BCrypt.Net.BCrypt.HashPassword(tempPass);
+                
+                account = new UserAccount(player.Name, hashedPassword, player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
                 
                 if (_config.ShowTemporaryPasswords) _pendingPasswords[player.UUID] = tempPass;
