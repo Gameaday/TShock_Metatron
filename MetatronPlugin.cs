@@ -90,11 +90,13 @@ public class MetatronPlugin : TerrariaPlugin
             if (File.Exists(path))
             {
                 var text = File.ReadAllText(path);
-                _config = System.Text.Json.JsonSerializer.Deserialize<CoreConfig>(text, MetatronJsonContext.Default.CoreConfig) ?? new CoreConfig();
+                // FIX: Standard, clean deserialization
+                _config = System.Text.Json.JsonSerializer.Deserialize<CoreConfig>(text) ?? new CoreConfig();
             }
             else
             {
-                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(_config, MetatronJsonContext.Default.CoreConfig));
+                var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(_config, options));
             }
         }
         catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Config load failed: {ex.Message}"); }
