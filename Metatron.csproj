@@ -13,7 +13,6 @@
 
   <ItemGroup>
     <PackageReference Include="TShock" Version="6.1.0" />
-    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" Aliases="BCryptNet" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
     <PackageReference Include="Discord.Net.Rest" Version="3.15.0" />
     <PackageReference Include="System.Linq.Async" Version="6.0.1" />
@@ -23,13 +22,21 @@
     <ItemGroup>
       <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" 
                         Condition="$([System.String]::Copy('%(FileName)').StartsWith('Discord')) Or 
-                                   $([System.String]::Copy('%(FileName)').StartsWith('BCrypt')) Or 
                                    $([System.String]::Copy('%(FileName)').StartsWith('System.Interactive')) Or 
                                    $([System.String]::Copy('%(FileName)').StartsWith('System.Linq')) Or 
                                    $([System.String]::Copy('%(FileName)').StartsWith('Microsoft.Bcl'))">
         <LogicalName>Metatron.Resources.%(FileName)%(Extension)</LogicalName>
       </EmbeddedResource>
     </ItemGroup>
+  </Target>
+
+  <Target Name="CleanWorkshop" AfterTargets="Build">
+    <ItemGroup>
+      <JunkDlls Include="$(OutDir)*.dll" Exclude="$(OutDir)$(TargetFileName)" />
+      <JunkJson Include="$(OutDir)*.json" Exclude="$(OutDir)$(AssemblyName).deps.json" />
+    </ItemGroup>
+    <Delete Files="@(JunkDlls)" />
+    <Delete Files="@(JunkJson)" />
   </Target>
 
 </Project>
