@@ -1,0 +1,35 @@
+name: CI Build Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build_test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Metatron
+        # This triggers the native embedding of Discord.Net and BCrypt
+        run: dotnet build -c Release -o ./build
+
+      - name: Upload Build Artifact
+        # Grabs the cleanly embedded .dll so you can test it immediately
+        uses: actions/upload-artifact@v4
+        with:
+          name: Metatron-CI-Build
+          path: ./build/Metatron.dll
+          if-no-files-found: error
