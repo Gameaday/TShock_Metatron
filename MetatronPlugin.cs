@@ -36,9 +36,10 @@ public class MetatronPlugin : TerrariaPlugin
             using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
             if (stream == null) return null;
 
-            byte[] data = new byte[stream.Length];
-            stream.Read(data, 0, data.Length);
-            return Assembly.Load(data);
+            // FIX: Modern, safe memory allocation to resolve CA2022
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return Assembly.Load(ms.ToArray());
         };
     }
 
