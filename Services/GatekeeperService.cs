@@ -1,3 +1,5 @@
+extern alias BCryptNet;
+
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -8,6 +10,7 @@ using Terraria;
 using TerrariaApi.Server;
 using TShockAPI;
 using TShockAPI.DB;
+using BC = BCryptNet::BCrypt.Net.BCrypt;
 
 #nullable enable
 
@@ -191,10 +194,8 @@ public class GatekeeperService
             {
                 string tempPass = Guid.NewGuid().ToString("N").Substring(0, 10);
                 
-                // FIX: Use TShock's native, internal BCrypt library directly.
-                string hashedPassword = BCrypt.Net.BCrypt.HashPassword(tempPass);
-                
-                account = new UserAccount(player.Name, hashedPassword, player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                // Using our cleanly aliased BCrypt module!
+                account = new UserAccount(player.Name, BC.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
                 
                 if (_config.ShowTemporaryPasswords) _pendingPasswords[player.UUID] = tempPass;
