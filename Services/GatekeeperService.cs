@@ -1,5 +1,3 @@
-extern alias BCryptNet;
-
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -10,7 +8,6 @@ using Terraria;
 using TerrariaApi.Server;
 using TShockAPI;
 using TShockAPI.DB;
-using BC = BCryptNet::BCrypt.Net.BCrypt;
 
 #nullable enable
 
@@ -63,7 +60,6 @@ public class GatekeeperService
         ServerApi.Hooks.GameUpdate.Deregister(_plugin, OnPulse);
     }
 
-    // --- 1. THE IRONCLAD PACKET FILTER ---
     private void OnGetData(GetDataEventArgs args)
     {
         if (args.Handled || !_config.EnableDiscordGate) return;
@@ -71,7 +67,6 @@ public class GatekeeperService
         var player = TShock.Players[args.Msg.whoAmI];
         if (player == null) return;
 
-        // If they are in Limbo, reject ALL packets except Passwords (38) and Chat Commands (82)
         if (_limboPlayers.ContainsKey(player.Index))
         {
             if (args.MsgID != PacketTypes.PasswordSend && (int)args.MsgID != 82)
@@ -81,7 +76,6 @@ public class GatekeeperService
             }
         }
 
-        // Handle the Password submission natively
         if (args.MsgID == PacketTypes.PasswordSend && !player.IsLoggedIn)
         {
             using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
@@ -95,10 +89,9 @@ public class GatekeeperService
                 return;
             }
 
-            // Did they type a valid Discord PIN into the Terraria Password box?
             if (_discord.PendingPins.TryRemove(enteredPassword, out var data))
             {
-                if (DateTime.UtcNow > data.Expiry) return; // Expired, let TShock handle it natively (fail)
+                if (DateTime.UtcNow > data.Expiry) return; 
 
                 args.Handled = true; 
                 _loginStrikes.TryRemove(ip, out _);
@@ -112,7 +105,6 @@ public class GatekeeperService
         }
     }
 
-    // --- 2. THE ARRIVAL ---
     private void OnJoin(JoinEventArgs args)
     {
         var player = TShock.Players[args.Who];
@@ -120,7 +112,6 @@ public class GatekeeperService
 
         bool isVerified = false;
 
-        // Frictionless Authentication Check
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
             if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record) && record.Uuid == player.UUID)
@@ -145,7 +136,7 @@ public class GatekeeperService
 
         if (_limboPlayers.ContainsKey(player.Index))
         {
-            player.SetBuff(163, 360000, true); // Webbed
+            player.SetBuff(163, 360000, true); 
             player.mute = true;
             player.SendMessage($"[c/FF0000:=== DISCORD GATE ACTIVE ===]", Color.White);
             player.SendMessage($"Your TShock account is not securely linked to Discord.", Color.Yellow);
@@ -168,7 +159,6 @@ public class GatekeeperService
         }
     }
 
-    // --- 3. THE COMMAND FALLBACKS ---
     private void VerifyCommand(CommandArgs args)
     {
         if (!_limboPlayers.ContainsKey(args.Player.Index))
@@ -194,14 +184,14 @@ public class GatekeeperService
 
     private void FinalizeLinkage(TSPlayer player, ulong discordId)
     {
-        // Auto-Generate TShock Account if they don't have one
         if (player.Account == null)
         {
             var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
             if (account == null)
             {
                 string tempPass = Guid.NewGuid().ToString("N").Substring(0, 10);
-                account = new UserAccount(player.Name, BC.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                // OPTIMIZATION: Using TShock's native hasher instead of embedding BCrypt
+                account = new UserAccount(player.Name, TShock.Utils.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
                 
                 if (_config.ShowTemporaryPasswords) _pendingPasswords[player.UUID] = tempPass;
@@ -209,24 +199,20 @@ public class GatekeeperService
             player.Account = account; 
         }
 
-        // Save to Database
         var record = new MetatronRecord(player.Account.Name, discordId, player.UUID);
         _ = _db.SaveSealAsync(record);
 
-        // Extract from Limbo
         _limboPlayers.TryRemove(player.Index, out _);
         player.mute = false;
         player.Heal();
         player.SendSuccessMessage("✨ Verification Complete. Welcome to the community.");
 
-        // Push Handshake (Forces the client to sync with the server now that they are un-frozen)
         _ = Task.Run(async () => {
             await Task.Delay(500);
             NetMessage.SendData(3, player.Index); 
             NetMessage.SendData(7, player.Index); 
         });
 
-        // Trigger the Celebration Message!
         _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
     }
 
@@ -254,7 +240,6 @@ public class GatekeeperService
         }
     }
 
-    // --- 4. THE CLEANUP ---
     private void OnPulse(EventArgs args)
     {
         if (++_tickCounter < 60) return;
