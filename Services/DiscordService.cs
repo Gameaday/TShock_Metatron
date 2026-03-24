@@ -24,6 +24,10 @@ public class DiscordService
     private DateTime _lastDiscordHeartbeat = DateTime.MinValue;
     private readonly CancellationTokenSource _engineCts = new();
 
+    // NEW: Chunked Audit Tracking
+    private readonly ConcurrentQueue<string> _auditQueue = new();
+    private DateTime _lastAuditRefill = DateTime.MinValue;
+
     public ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> PendingPins { get; } = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
 
@@ -45,16 +49,11 @@ public class DiscordService
             if (_config.LinkChannelId != 0)
             {
                 _cachedLinkChannel = await _discordRest.GetChannelAsync(_config.LinkChannelId);
-                if (_cachedLinkChannel != null)
-                {
-                    var initialMsgs = await _cachedLinkChannel.GetMessagesAsync(1);
-                    var lastMsg = initialMsgs.FirstOrDefault();
-                    if (lastMsg != null) _lastProcessedMessageId = lastMsg.Id;
-                }
+                var msgs = await _cachedLinkChannel?.GetMessagesAsync(1)!;
+                if (msgs != null && msgs.Any()) _lastProcessedMessageId = msgs.First().Id;
             }
 
-            TShock.Log.ConsoleInfo("[Metatron] Facade Scribe Engine initialized with Rate Limiting.");
-            _lastDiscordHeartbeat = DateTime.UtcNow; 
+            TShock.Log.ConsoleInfo("[Metatron] Unified Scribe Engine initialized.");
             
             _ = Task.Run(() => UpdateStatusMessageAsync(true));
             _ = Task.Run(() => PollingEngineAsync(), _engineCts.Token);
@@ -68,6 +67,7 @@ public class DiscordService
         try { UpdateStatusMessageAsync(false).GetAwaiter().GetResult(); } catch { }
     }
 
+    // THE SINGLE THREAD ENGINE
     private async Task PollingEngineAsync()
     {
         while (!_engineCts.IsCancellationRequested && !MetatronPlugin.IsShuttingDown)
@@ -75,21 +75,46 @@ public class DiscordService
             try
             {
                 var now = DateTime.UtcNow;
+                bool hasPlayers = TShock.Players.Any(p => p != null && p.Active);
 
-                var expiredPins = PendingPins.Where(kvp => now > kvp.Value.Expiry).Select(kvp => kvp.Key).ToList();
-                foreach (var pin in expiredPins) PendingPins.TryRemove(pin, out _);
+                // 1. PIN Cleanup
+                var expired = PendingPins.Where(kvp => now > kvp.Value.Expiry).Select(kvp => kvp.Key).ToList();
+                foreach (var pin in expired) PendingPins.TryRemove(pin, out _);
 
+                // 2. Poll Discord Channel
                 await PollLinkChannelAsync();
 
+                // 3. Status Heartbeat
                 if ((now - _lastDiscordHeartbeat).TotalSeconds >= 150)
                 {
                     _lastDiscordHeartbeat = now;
                     _ = UpdateStatusMessageAsync(true);
                 }
 
-                bool hasPlayers = TShock.Players.Any(p => p != null && p.Active);
-                int sleepSeconds = hasPlayers ? _config.PollIntervalSeconds : 60; 
+                // 4. CHUNKED AUDIT (Zero extra threads, zero blocking)
+                if (_auditQueue.IsEmpty && (now - _lastAuditRefill).TotalHours >= _config.LedgerAuditIntervalHours)
+                {
+                    _lastAuditRefill = now;
+                    foreach (var key in _db.Ledger.Keys) _auditQueue.Enqueue(key);
+                }
 
+                if (_auditQueue.TryDequeue(out string? accountName) && _db.Ledger.TryGetValue(accountName, out var record))
+                {
+                    bool isStillValid = await CheckUserRoleAsync(record.DiscordId);
+                    if (!isStillValid)
+                    {
+                        TShock.Log.ConsoleInfo($"[Metatron] Audit: Severing seal for {record.AccountName} (No longer valid in Discord).");
+                        if (_db.Ledger.TryRemove(accountName, out _))
+                        {
+                            await _db.RemoveSealAsync(record.DiscordId);
+                            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)
+                                ?.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                        }
+                    }
+                }
+
+                // 5. Dynamic Sleep
+                int sleepSeconds = hasPlayers ? _config.PollIntervalSeconds : 60; 
                 await Task.Delay(TimeSpan.FromSeconds(sleepSeconds), _engineCts.Token);
             }
             catch (TaskCanceledException) { break; } 
@@ -124,15 +149,11 @@ public class DiscordService
 
     private async Task HandleLinkAsync(RestMessageChannel channel, RestMessage msg)
     {
+        if (_discordRest == null) return;
+
         if (_scribeRateLimit.TryGetValue(msg.Author.Id, out var lastUse) && (DateTime.UtcNow - lastUse).TotalMinutes < 2)
         {
             await DeleteAndWarnAsync(channel, msg, $"⏳ <@{msg.Author.Id}>, stop requested. Wait a moment.");
-            return;
-        }
-
-        if (_db.Ledger.Values.Any(r => r.DiscordId == msg.Author.Id))
-        {
-            await DeleteAndWarnAsync(channel, msg, $"ℹ️ <@{msg.Author.Id}>, your Discord account is already linked to a Celestial Seal.");
             return;
         }
 
@@ -146,24 +167,18 @@ public class DiscordService
         try 
         {
             string pin = Random.Shared.Next(100000, 999999).ToString();
-            
             var dm = await msg.Author.CreateDMChannelAsync();
             if (dm != null)
             {
                 await dm.SendMessageAsync($"📜 **Authorization PIN:** `{pin}`\nExpires in 15 mins. Enter this PIN as your Server Password in Terraria.");
-                
                 PendingPins[pin] = (msg.Author.Id, DateTime.UtcNow.AddMinutes(15));
                 _scribeRateLimit[msg.Author.Id] = DateTime.UtcNow;
 
                 TShock.Log.ConsoleInfo($"[Metatron] Discord User {msg.Author.Username} requested a linking PIN.");
                 await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, check your DMs for your PIN!");
             }
-            else throw new Exception();
         }
-        catch 
-        {
-            await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, I couldn't DM you! Enable DMs and try again.");
-        }
+        catch { await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, enable DMs and try again."); }
     }
 
     private async Task HandleUnlinkAsync(RestMessageChannel channel, RestMessage msg)
@@ -172,25 +187,17 @@ public class DiscordService
         if (record != null && _db.Ledger.TryRemove(record.AccountName.ToLower(), out _))
         {
             _ = _db.RemoveSealAsync(msg.Author.Id);
-            var player = TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == record.AccountName.ToLower());
-            player?.Disconnect("Your Discord authorization has been revoked via the Discord channel.");
-
-            TShock.Log.ConsoleInfo($"[Metatron] Discord User {msg.Author.Username} severed their Celestial Seal.");
+            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == record.AccountName.ToLower())?.Disconnect("Your Discord authorization has been revoked via Discord.");
             await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, your Celestial Seal has been severed.");
-            return;
         }
-        await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you do not have an active seal to sever.");
+        else await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you do not have an active seal.");
     }
 
     private async Task DeleteAndWarnAsync(RestMessageChannel channel, RestMessage triggerMsg, string warning)
     {
         var warnMsg = await channel.SendMessageAsync(warning);
         try { await triggerMsg.DeleteAsync(); } catch { }
-        
-        if (warnMsg != null)
-        {
-            _ = Task.Delay(5000).ContinueWith(async _ => { try { await warnMsg.DeleteAsync(); } catch { } });
-        }
+        if (warnMsg != null) _ = Task.Delay(5000).ContinueWith(async _ => { try { await warnMsg.DeleteAsync(); } catch { } });
     }
 
     private async Task UpdateStatusMessageAsync(bool isOnline)
@@ -200,52 +207,34 @@ public class DiscordService
         {
             long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             string statusText = isOnline 
-                ? $"🟢 **SERVER IS ONLINE**\nWelcome! Type `!link` in this channel to securely connect your Discord account to the server.\n\n⏱️ *Last Scribe Heartbeat:* <t:{unixTimestamp}:f> (<t:{unixTimestamp}:R>)"
-                : $"🔴 **SERVER IS OFFLINE**\nThe verification gate is currently closed. Please check back later.\n\n🛑 *Server Shutdown:* <t:{unixTimestamp}:f>";
+                ? $"🟢 **SERVER IS ONLINE**\nType `!link` here to securely connect your Discord account.\n\n⏱️ *Heartbeat:* <t:{unixTimestamp}:R>"
+                : $"🔴 **SERVER IS OFFLINE**\nThe gate is currently closed.\n\n🛑 *Shutdown:* <t:{unixTimestamp}:f>";
 
             if (_statusMessageId == 0)
             {
                 var pins = await _cachedLinkChannel.GetPinnedMessagesAsync();
-                var existingPin = pins.FirstOrDefault(p => p.Author.Id == _discordRest.CurrentUser.Id);
-                
-                if (existingPin != null)
-                {
-                    _statusMessageId = existingPin.Id;
-                    await existingPin.ModifyAsync(statusText);
-                }
-                else
-                {
-                    var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText);
-                    if (newMsg != null)
-                    {
-                        _statusMessageId = newMsg.Id;
-                        await newMsg.PinAsync();
-                    }
-                }
+                var existing = pins.FirstOrDefault(p => p.Author.Id == _discordRest.CurrentUser.Id);
+                if (existing != null) { _statusMessageId = existing.Id; await existing.ModifyAsync(statusText); }
+                else { var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText); if (newMsg != null) { _statusMessageId = newMsg.Id; await newMsg.PinAsync(); } }
             }
-            else
-            {
-                // We have the ID, but we don't have the object in memory. 
-                // We'll use a fast raw patch rather than fetching the whole message first to save API calls.
-                await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
-            }
+            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
         }
-        catch { }
-        finally { _statusLock.Release(); }
+        catch { } finally { _statusLock.Release(); }
     }
 
-    private async Task<bool> CheckUserRoleAsync(ulong userId)
+    public async Task<bool> CheckUserRoleAsync(ulong userId)
     {
-        if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0 || _discordRest == null) return true;
+        if (_discordRest == null || _config.DiscordGuildId == 0) return true;
         try
         {
             var guild = await _discordRest.GetGuildAsync(_config.DiscordGuildId);
             if (guild == null) return false;
 
             var user = await guild.GetUserAsync(userId);
-            if (user == null) return false;
-
-            return user.RoleIds.Contains(_config.RequiredDiscordRoleId);
+            if (user == null) return false; // Left the server
+            
+            if (_config.RequiredDiscordRoleId != 0) return user.RoleIds.Contains(_config.RequiredDiscordRoleId); // Has role
+            return true; // No role required, but is in server
         }
         catch { return false; }
     }
@@ -253,29 +242,17 @@ public class DiscordService
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
         if (_cachedLinkChannel == null) return;
-        try 
-        {
-            await _cachedLinkChannel.SendMessageAsync($"✨ **The Celestial Ledger updates...**\n<@{discordId}> has forged their seal as `{characterName}` and entered the realm!");
-        } catch { }
+        try { await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName)); } catch { }
     }
-    
-public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
+
+    public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
     {
-        if (_api == null) return;
+        if (_discordRest == null) return;
         try
         {
-            // 1. Open the DM Channel natively
-            var dmChannelJson = await _api.PostAsync("/users/@me/channels", new { recipient_id = discordId.ToString() });
-            if (dmChannelJson != null)
-            {
-                string dmChannelId = dmChannelJson.Value.GetProperty("id").GetString()!;
-                
-                // 2. Format and send the recovery message
-                string msg = $"✨ **Celestial Seal Forged!** Your account `{characterName}` is securely linked.\n\n🔑 **Your TShock Recovery Password:** `{password}`\n\n*Keep this safe! Metatron uses frictionless UUID login, so you will only need this password if you connect from a new computer or lose your UUID.*";
-                
-                await _api.PostAsync($"/channels/{dmChannelId}/messages", new { content = msg });
-            }
+            var dm = await _discordRest.GetUserAsync(discordId).ContinueWith(t => t.Result?.CreateDMChannelAsync()).Unwrap();
+            if (dm != null) await dm.SendMessageAsync($"✨ **Seal Forged!** Account: `{characterName}`\n🔑 **Recovery Password:** `{password}`\n*Keep this safe!*");
         }
-        catch { TShock.Log.ConsoleError("[Metatron] Failed to DM recovery password."); }
+        catch { }
     }
 }
