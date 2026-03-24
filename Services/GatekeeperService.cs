@@ -144,7 +144,11 @@ public class GatekeeperService
 
     private void FinalizeLinkage(TSPlayer player, ulong discordId)
     {
-        player.GodMode = false; player.DelBuff(163); 
+        player.GodMode = false; 
+        
+        // FIX: Setting buff time to 0 safely clears it natively through TShock
+        player.SetBuff(163, 0, true); 
+        
         string? newPassword = null;
 
         if (player.Account == null)
