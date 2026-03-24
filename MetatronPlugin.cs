@@ -1,10 +1,8 @@
 extern alias BCryptNet;
 
 using System;
-using System.Collections.Concurrent;
-using System.Linq;
-using System.Net.Http;
-using System.Threading;
+using System.IO;
+using System.Reflection;
 using Terraria;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -14,41 +12,33 @@ using TShockAPI;
 namespace Metatron;
 
 [ApiVersion(2, 1)]
-public partial class MetatronPlugin : TerrariaPlugin
+public class MetatronPlugin : TerrariaPlugin
 {
     public override string Name => "Project Metatron";
     public override Version Version => new Version(3, 0, 0);
     public override string Author => "HistoryLabs";
 
-    private CoreConfig _config = new();
-    public static bool IsShuttingDown = false; 
-
-    private readonly ConcurrentDictionary<string, MetatronRecord> _ledger = new();
-    private readonly ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> _pendingPins = new();
-    private readonly ConcurrentDictionary<string, string> _pendingPasswords = new();
-    private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
+    public static bool IsShuttingDown = false;
     
-    private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
-    private readonly ConcurrentDictionary<string, int> _loginStrikes = new();
-    private readonly SemaphoreSlim _dbLock = new(1, 1);
-
-    private static readonly HttpClient _httpClient = new();
+    private CoreConfig _config = new();
+    private DatabaseService? _database;
+    private DiscordService? _discord;
 
     static MetatronPlugin()
     {
         AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
         {
-            string name = new System.Reflection.AssemblyName(args.Name).Name ?? "";
+            string name = new AssemblyName(args.Name).Name ?? "";
             if (!name.StartsWith("Discord") && !name.StartsWith("BCrypt") && !name.StartsWith("System.Interactive") && !name.StartsWith("System.Linq") && !name.StartsWith("Microsoft.Bcl"))
                 return null;
 
             string resourceName = $"Metatron.Resources.{name}.dll";
-            using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
             if (stream == null) return null;
 
             byte[] data = new byte[stream.Length];
             stream.Read(data, 0, data.Length);
-            return System.Reflection.Assembly.Load(data);
+            return Assembly.Load(data);
         };
     }
 
@@ -56,25 +46,21 @@ public partial class MetatronPlugin : TerrariaPlugin
 
     public override void Initialize()
     {
-        InitializePersistence();
-        InitializeGatekeeperEnforcement();
-        
-        if (_config.EnableDiscordGate) _ = InitializeDiscordRestAsync();
+        LoadConfig();
+
+        _database = new DatabaseService();
+        _discord = new DiscordService(_config, _database);
+
+        _database.Initialize();
+        if (_config.EnableDiscordGate)
+        {
+            _ = _discord.StartAsync();
+        }
 
         AppDomain.CurrentDomain.ProcessExit += (s, e) => {
             IsShuttingDown = true;
-            _discordTimer?.Stop();
+            _discord?.Stop();
         };
-        
-        ServerApi.Hooks.NetGetData.Register(this, OnGatekeeperPassword, 100); 
-        ServerApi.Hooks.ServerJoin.Register(this, OnGatekeeperJoin, int.MaxValue);
-        ServerApi.Hooks.NetGreetPlayer.Register(this, OnGatekeeperGreet);
-        ServerApi.Hooks.ServerLeave.Register(this, OnGatekeeperLeave);
-        ServerApi.Hooks.GameUpdate.Register(this, OnGatekeeperPulse);
-
-        Commands.ChatCommands.Add(new Command("metatron.admin", AdminCommand, "metatron", "meta"));
-        Commands.ChatCommands.Add(new Command("", VerifyCommand, "verify"));
-        Commands.ChatCommands.Add(new Command("", UnlinkCommand, "unlink"));
     }
 
     protected override void Dispose(bool disposing)
@@ -82,41 +68,28 @@ public partial class MetatronPlugin : TerrariaPlugin
         if (disposing)
         {
             IsShuttingDown = true;
-            if (_config.EnableDiscordGate && _discordRest != null) try { UpdateStatusMessageAsync(false).GetAwaiter().GetResult(); } catch { }
-            _discordTimer?.Stop();
-            _configWatcher?.Dispose();
-            
-            ServerApi.Hooks.NetGetData.Deregister(this, OnGatekeeperPassword);
-            ServerApi.Hooks.ServerJoin.Deregister(this, OnGatekeeperJoin);
-            ServerApi.Hooks.NetGreetPlayer.Deregister(this, OnGatekeeperGreet);
-            ServerApi.Hooks.ServerLeave.Deregister(this, OnGatekeeperLeave);
-            ServerApi.Hooks.GameUpdate.Deregister(this, OnGatekeeperPulse);
+            _discord?.Stop();
         }
         base.Dispose(disposing);
     }
 
-    private void AdminCommand(CommandArgs args)
+    private void LoadConfig()
     {
-        if (args.Parameters.Count == 0) { args.Player.SendErrorMessage("Usage: /meta <reload | check | unlink | whois>"); return; }
-        string cmd = args.Parameters[0].ToLower();
-
-        if (cmd == "reload") { LoadCoreConfig(); args.Player.SendSuccessMessage("[Metatron] Core Config reloaded."); }
-        else if (cmd == "whois" && args.Parameters.Count > 1)
+        string path = Path.Combine(TShock.SavePath, "Metatron", "Core.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        
+        try
         {
-            string target = string.Join(" ", args.Parameters.Skip(1)).ToLower();
-            if (_ledger.TryGetValue(target, out var record))
-                args.Player.SendInfoMessage($"🔍 [Metatron] Identity: Discord {record.DiscordId} | UUID {record.Uuid}");
-            else args.Player.SendErrorMessage($"[Metatron] No record found for '{target}'.");
-        }
-        else if (cmd == "unlink" && args.Parameters.Count > 1)
-        {
-            string targetName = string.Join(" ", args.Parameters.Skip(1)).ToLower();
-            if (_ledger.TryRemove(targetName, out var record)) {
-                RemoveSealFromDatabase(record.DiscordId);
-                args.Player.SendSuccessMessage($"[Metatron] Severed seal for {targetName}.");
-                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == targetName)?.Disconnect("Your Discord seal was severed.");
+            if (File.Exists(path))
+            {
+                var text = File.ReadAllText(path);
+                _config = System.Text.Json.JsonSerializer.Deserialize<CoreConfig>(text, MetatronJsonContext.Default.CoreConfig) ?? new CoreConfig();
+            }
+            else
+            {
+                File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(_config, MetatronJsonContext.Default.CoreConfig));
             }
         }
-        else if (cmd == "check") args.Player.SendInfoMessage($"Discord Gate: {(_config.EnableDiscordGate ? "ON" : "OFF")} | Quarantines: {_limboPlayers.Count}");
+        catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Config load failed: {ex.Message}"); }
     }
 }
