@@ -30,7 +30,6 @@ public class DiscordService
     private System.Timers.Timer? _discordTimer; 
     private DateTime _lastDiscordPoll = DateTime.MinValue;
     private DateTime _lastDiscordHeartbeat = DateTime.MinValue;
-    private static readonly HttpClient _httpClient = new();
 
     public ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> PendingPins { get; } = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
@@ -234,17 +233,17 @@ public class DiscordService
 
     private async Task<bool> CheckUserRoleAsync(ulong userId)
     {
-        if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0) return true;
+        if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0 || _discordRest == null) return true;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"https://discord.com/api/v10/guilds/{_config.DiscordGuildId}/members/{userId}");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bot", _config.DiscordBotToken);
-            var response = await _httpClient.SendAsync(request);
-            if (!response.IsSuccessStatusCode) return false;
+            // OPTIMIZATION: Use the native Discord API wrapper instead of raw HTTP requests
+            var guild = await _discordRest.GetGuildAsync(_config.DiscordGuildId);
+            if (guild == null) return false;
 
-            var content = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(content);
-            return doc.RootElement.GetProperty("roles").EnumerateArray().Any(role => role.GetString() == _config.RequiredDiscordRoleId.ToString());
+            var user = await guild.GetUserAsync(userId);
+            if (user == null) return false;
+
+            return user.RoleIds.Contains(_config.RequiredDiscordRoleId);
         }
         catch { return false; }
     }
