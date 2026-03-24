@@ -259,3 +259,22 @@ public class DiscordService
         } catch { }
     }
 }
+public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
+    {
+        if (_api == null) return;
+        try
+        {
+            // 1. Open the DM Channel natively
+            var dmChannelJson = await _api.PostAsync("/users/@me/channels", new { recipient_id = discordId.ToString() });
+            if (dmChannelJson != null)
+            {
+                string dmChannelId = dmChannelJson.Value.GetProperty("id").GetString()!;
+                
+                // 2. Format and send the recovery message
+                string msg = $"✨ **Celestial Seal Forged!** Your account `{characterName}` is securely linked.\n\n🔑 **Your TShock Recovery Password:** `{password}`\n\n*Keep this safe! Metatron uses frictionless UUID login, so you will only need this password if you connect from a new computer or lose your UUID.*";
+                
+                await _api.PostAsync($"/channels/{dmChannelId}/messages", new { content = msg });
+            }
+        }
+        catch { TShock.Log.ConsoleError("[Metatron] Failed to DM recovery password."); }
+    }
