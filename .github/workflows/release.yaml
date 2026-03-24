@@ -35,6 +35,6 @@ jobs:
           # This grabs any .dll built in the Release directory. 
           # If your plugin produces multiple DLLs (like dependencies) and you ONLY 
           # want the main plugin file, change this to: "**/bin/Release/**/TShock_Metatron.dll"
-          files: "**/bin/Release/**/*.dll"
+          files: "**/bin/Release/*/Metatron.dll"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
