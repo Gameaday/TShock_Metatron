@@ -1,6 +1,9 @@
+extern alias BCryptNet;
+
 using System;
 using System.IO;
 using System.Reflection;
+using System.Linq;
 using Terraria;
 using TerrariaApi.Server;
 using TShockAPI;
@@ -28,8 +31,7 @@ public class MetatronPlugin : TerrariaPlugin
         AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
         {
             string name = new AssemblyName(args.Name).Name ?? "";
-            if (!name.StartsWith("Discord") && !name.StartsWith("System.Interactive") && !name.StartsWith("System.Linq") && !name.StartsWith("Microsoft.Bcl"))
-                return null;
+            if (!name.StartsWith("BCrypt")) return null;
 
             string resourceName = $"Metatron.Resources.{name}.dll";
             using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
@@ -60,6 +62,7 @@ public class MetatronPlugin : TerrariaPlugin
 
         AppDomain.CurrentDomain.ProcessExit += (s, e) => {
             IsShuttingDown = true;
+            _gatekeeper?.DisableHooks();
             _discord?.Stop();
         };
 
@@ -114,9 +117,9 @@ public class MetatronPlugin : TerrariaPlugin
         {
             string targetName = string.Join(" ", args.Parameters.Skip(1)).ToLower();
             if (_database?.Ledger.TryRemove(targetName, out var record) == true) {
-                _ = _database.RemoveSealAsync(record.DiscordId);
+                _ = _database?.RemoveSealAsync(record.DiscordId);
                 args.Player.SendSuccessMessage($"[Metatron] Severed seal for {targetName}.");
-                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == targetName)?.Disconnect("Your Discord seal was severed.");
+                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == targetName)?.Disconnect("Your Discord seal was administratively severed.");
             }
         }
         else if (cmd == "check") args.Player.SendInfoMessage($"Discord Gate: {(_config.EnableDiscordGate ? "ON" : "OFF")}");
