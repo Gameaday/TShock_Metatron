@@ -21,10 +21,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          # Note: Change this to match the .NET version your plugin targets!
-          # TShock v5.x uses '6.0.x'
-          # TShock v6.x uses '9.0.x'
-          dotnet-version: '6.0.x' 
+          dotnet-version: '9.0.x' 
 
       - name: Restore dependencies
         run: dotnet restore
