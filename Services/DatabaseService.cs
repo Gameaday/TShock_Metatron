@@ -19,7 +19,6 @@ public class DatabaseService
 
     public DatabaseService()
     {
-        // OPTIMIZATION: Enabled Connection Pooling for instant read/writes
         string path = Path.Combine(TShock.SavePath, "Metatron", "Archive.sqlite");
         _dbConnectionString = $"Data Source={path};Pooling=True;";
     }
@@ -52,13 +51,15 @@ public class DatabaseService
         await _dbLock.WaitAsync();
         try {
             using var conn = new SqliteConnection(_dbConnectionString);
-            conn.Open();
+            await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "INSERT OR REPLACE INTO Ledger VALUES (@n, @d, @u)";
             cmd.Parameters.AddWithValue("@n", record.AccountName.ToLower());
             cmd.Parameters.AddWithValue("@d", record.DiscordId.ToString());
             cmd.Parameters.AddWithValue("@u", record.Uuid);
-            cmd.ExecuteNonQuery();
+            
+            // NOW TRULY ASYNC
+            await cmd.ExecuteNonQueryAsync();
         } catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] DB Save Error: {ex.Message}"); }
         finally { _dbLock.Release(); }
     }
@@ -68,11 +69,13 @@ public class DatabaseService
         await _dbLock.WaitAsync();
         try {
             using var conn = new SqliteConnection(_dbConnectionString);
-            conn.Open();
+            await conn.OpenAsync();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM Ledger WHERE DiscordId = @did";
             cmd.Parameters.AddWithValue("@did", discordId.ToString());
-            cmd.ExecuteNonQuery();
+            
+            // NOW TRULY ASYNC
+            await cmd.ExecuteNonQueryAsync();
         } catch { }
         finally { _dbLock.Release(); }
     }
