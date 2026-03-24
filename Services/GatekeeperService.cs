@@ -24,7 +24,6 @@ public class GatekeeperService
     private readonly DiscordService _discord;
 
     private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
-    private readonly ConcurrentDictionary<string, string> _pendingPasswords = new();
     private readonly ConcurrentDictionary<string, int> _loginStrikes = new();
     
     private int _tickCounter = 0;
@@ -79,31 +78,28 @@ public class GatekeeperService
             }
         }
 
-        if (args.MsgID == PacketTypes.PasswordSend && !player.IsLoggedIn)
+        if (args.MsgID == PacketTypes.PasswordSend)
         {
             using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
             string enteredPassword = reader.ReadString();
             string ip = player.IP ?? "Unknown";
 
-            if (_loginStrikes.TryGetValue(ip, out int strikes) && strikes >= 5)
-            {
-                player.Disconnect("⛔ Too many incorrect attempts. Please wait before trying again.");
-                args.Handled = true;
-                return;
-            }
-
             if (_discord.PendingPins.TryRemove(enteredPassword, out var data))
             {
                 if (DateTime.UtcNow > data.Expiry) return; 
 
+                bool accountExists = TShock.UserAccounts.GetUserAccountByName(player.Name) != null;
+
+                if (accountExists && !player.IsLoggedIn)
+                {
+                    player.SendErrorMessage("This account is already registered. Please log in with your TShock password first, then use /verify <pin>.");
+                    args.Handled = true;
+                    return;
+                }
+
                 args.Handled = true; 
                 _loginStrikes.TryRemove(ip, out _);
-
                 FinalizeLinkage(player, data.DiscordId);
-            }
-            else
-            {
-                _loginStrikes.AddOrUpdate(ip, 1, (key, val) => val + 1);
             }
         }
     }
@@ -139,26 +135,25 @@ public class GatekeeperService
 
         if (_limboPlayers.ContainsKey(player.Index))
         {
+            player.GodMode = true; 
             player.SetBuff(163, 360000, true); 
             player.mute = true;
-            player.SendMessage($"[c/FF0000:=== DISCORD GATE ACTIVE ===]", Color.White);
-            player.SendMessage($"Your TShock account is not securely linked to Discord.", Color.Yellow);
-            player.SendMessage($"Type [c/00FF00:/verify <pin>] in chat to link it and unlock your character.", Color.Yellow);
-            return;
-        }
 
-        if (_pendingPasswords.TryRemove(player.UUID, out var pass))
-        {
-            _ = Task.Run(async () =>
+            bool accountExists = TShock.UserAccounts.GetUserAccountByName(player.Name) != null;
+
+            if (accountExists)
             {
-                await Task.Delay(2000);
-                player.SendMessage($"[c/00FF00:[Metatron]] Account auto-registered successfully.", Color.White);
-                player.SendMessage($"[c/00FF00:[Metatron]] Your Temporary Password is: [c/ffffff:{pass}]", Color.White);
-            });
-        }
-        else if (player.IsLoggedIn && _config.EnableFrictionlessAuth)
-        {
-            player.SendSuccessMessage("✨ Celestial Seal recognized. Securely logged in.");
+                player.SendMessage($"[c/FF0000:=== DISCORD GATE ACTIVE ===]", Color.White);
+                player.SendMessage($"Welcome back! Your account needs to be securely linked to Discord.", Color.Yellow);
+                player.SendMessage($"1. Log in using: [c/00FF00:/login <password>]", Color.White);
+                player.SendMessage($"2. Link using: [c/00FF00:/verify <discord-pin>]", Color.White);
+            }
+            else
+            {
+                player.SendMessage($"[c/FF0000:=== DISCORD GATE ACTIVE ===]", Color.White);
+                player.SendMessage($"Your TShock account is not securely linked to Discord.", Color.Yellow);
+                player.SendMessage($"Type your Discord PIN into the Server Password box, or use [c/00FF00:/verify <pin>].", Color.White);
+            }
         }
     }
 
@@ -182,23 +177,33 @@ public class GatekeeperService
             return;
         }
 
+        bool accountExists = TShock.UserAccounts.GetUserAccountByName(args.Player.Name) != null;
+
+        if (accountExists && !args.Player.IsLoggedIn)
+        {
+            args.Player.SendErrorMessage("This account already exists. Please /login with your password before verifying.");
+            return;
+        }
+
         FinalizeLinkage(args.Player, data.DiscordId);
     }
 
     private void FinalizeLinkage(TSPlayer player, ulong discordId)
     {
+        player.GodMode = false;
+        player.DelBuff(163); 
+        
+        string? newPassword = null; // Track if a new password was generated
+
         if (player.Account == null)
         {
             var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
             if (account == null)
             {
-                string tempPass = Guid.NewGuid().ToString("N").Substring(0, 10);
+                newPassword = Guid.NewGuid().ToString("N").Substring(0, 10);
                 
-                // Using our cleanly aliased BCrypt module!
-                account = new UserAccount(player.Name, BC.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                account = new UserAccount(player.Name, BC.HashPassword(newPassword), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
-                
-                if (_config.ShowTemporaryPasswords) _pendingPasswords[player.UUID] = tempPass;
             }
             player.Account = account; 
         }
@@ -209,7 +214,7 @@ public class GatekeeperService
         _limboPlayers.TryRemove(player.Index, out _);
         player.mute = false;
         player.Heal();
-        player.SendSuccessMessage("✨ Verification Complete. Welcome to the community.");
+        player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
 
         _ = Task.Run(async () => {
             await Task.Delay(500);
@@ -218,6 +223,12 @@ public class GatekeeperService
         });
 
         _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
+
+        // TRIGGER THE RECOVERY DM
+        if (newPassword != null && _config.ShowTemporaryPasswords)
+        {
+            _ = _discord.SendRecoveryPasswordAsync(discordId, player.Name, newPassword);
+        }
     }
 
     private void UnlinkCommand(CommandArgs args)
@@ -231,16 +242,7 @@ public class GatekeeperService
         if (_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record))
         {
             _ = _db.RemoveSealAsync(record.DiscordId); 
-            args.Player.SendSuccessMessage("✨ Your Celestial Seal has been severed. You are no longer linked.");
-
-            if (_config.EnableDiscordGate)
-            {
-                _limboPlayers[args.Player.Index] = DateTime.UtcNow;
-                args.Player.SetBuff(163, 360000, true);
-                args.Player.mute = true;
-                args.Player.SendMessage($"[c/FF0000:=== SERVER IS DISCORD-GATED ===]", Color.White);
-                args.Player.SendMessage($"Type [c/00FF00:/verify <pin>] to re-enter.", Color.White);
-            }
+            args.Player.Disconnect("✨ Your Celestial Seal has been severed. You are no longer linked.");
         }
     }
 
@@ -271,6 +273,5 @@ public class GatekeeperService
     private void OnLeave(LeaveEventArgs args) 
     { 
         _limboPlayers.TryRemove(args.Who, out _); 
-        _pendingPasswords.TryRemove(TShock.Players[args.Who]?.UUID ?? "", out _);
     }
 }
