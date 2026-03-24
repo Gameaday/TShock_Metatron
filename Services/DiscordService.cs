@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Metatron.DiscordStub;
 using TShockAPI;
 
 #nullable enable
@@ -15,12 +15,10 @@ public class DiscordService
     private readonly CoreConfig _config;
     private readonly DatabaseService _db;
     
-    // NEW: Our custom micro-library engine!
-    private DiscordWebClient? _api;
-    
+    private DiscordRestClient? _discordRest;
+    private RestMessageChannel? _cachedLinkChannel;
     private ulong _lastProcessedMessageId = 0;
     private ulong _statusMessageId = 0;
-    private ulong _botUserId = 0;
     
     private readonly SemaphoreSlim _statusLock = new(1, 1);
     private DateTime _lastDiscordHeartbeat = DateTime.MinValue;
@@ -41,12 +39,21 @@ public class DiscordService
 
         try
         {
-            _api = new DiscordWebClient(_config.DiscordBotToken);
+            _discordRest = new DiscordRestClient();
+            await _discordRest.LoginAsync(TokenType.Bot, _config.DiscordBotToken);
+            
+            if (_config.LinkChannelId != 0)
+            {
+                _cachedLinkChannel = await _discordRest.GetChannelAsync(_config.LinkChannelId);
+                if (_cachedLinkChannel != null)
+                {
+                    var initialMsgs = await _cachedLinkChannel.GetMessagesAsync(1);
+                    var lastMsg = initialMsgs.FirstOrDefault();
+                    if (lastMsg != null) _lastProcessedMessageId = lastMsg.Id;
+                }
+            }
 
-            var meJson = await _api.GetAsync("/users/@me");
-            if (meJson != null) _botUserId = ulong.Parse(meJson.Value.GetProperty("id").GetString()!);
-
-            TShock.Log.ConsoleInfo("[Metatron] Native Scribe Engine initialized with Rate Limiting.");
+            TShock.Log.ConsoleInfo("[Metatron] Facade Scribe Engine initialized with Rate Limiting.");
             _lastDiscordHeartbeat = DateTime.UtcNow; 
             
             _ = Task.Run(() => UpdateStatusMessageAsync(true));
@@ -92,57 +99,47 @@ public class DiscordService
 
     private async Task PollLinkChannelAsync()
     {
-        if (_config.LinkChannelId == 0 || _api == null) return;
+        if (_discordRest == null || _cachedLinkChannel == null) return;
 
         try
         {
-            string url = _lastProcessedMessageId == 0 
-                ? $"/channels/{_config.LinkChannelId}/messages?limit=10"
-                : $"/channels/{_config.LinkChannelId}/messages?after={_lastProcessedMessageId}&limit=50";
+            var messages = _lastProcessedMessageId == 0 
+                ? await _cachedLinkChannel.GetMessagesAsync(10)
+                : await _cachedLinkChannel.GetMessagesAsync(_lastProcessedMessageId, Direction.After, 50);
 
-            var messages = await _api.GetAsync(url);
-            if (messages == null || messages.Value.ValueKind != JsonValueKind.Array) return;
-
-            var msgsArray = messages.Value.EnumerateArray().Reverse().ToList(); 
+            var orderedMsgs = messages.OrderBy(m => m.Timestamp).ToList();
+            if (!orderedMsgs.Any()) return;
             
-            foreach (var msg in msgsArray)
+            foreach (var msg in orderedMsgs)
             {
-                _lastProcessedMessageId = ulong.Parse(msg.GetProperty("id").GetString()!);
-                
-                var author = msg.GetProperty("author");
-                if (author.TryGetProperty("bot", out var isBot) && isBot.GetBoolean()) continue;
+                _lastProcessedMessageId = msg.Id; 
+                if (msg.Author.IsBot) continue;
 
-                string content = msg.GetProperty("content").GetString() ?? "";
-                ulong authorId = ulong.Parse(author.GetProperty("id").GetString()!);
-                string authorName = author.GetProperty("username").GetString() ?? "Unknown";
-
-                if (content.StartsWith("!link", StringComparison.OrdinalIgnoreCase)) await HandleLinkAsync(authorId, authorName, _lastProcessedMessageId);
-                else if (content.StartsWith("!unlink", StringComparison.OrdinalIgnoreCase)) await HandleUnlinkAsync(authorId, authorName, _lastProcessedMessageId);
+                if (msg.Content.StartsWith("!link", StringComparison.OrdinalIgnoreCase)) await HandleLinkAsync(_cachedLinkChannel, msg);
+                else if (msg.Content.StartsWith("!unlink", StringComparison.OrdinalIgnoreCase)) await HandleUnlinkAsync(_cachedLinkChannel, msg);
             }
         }
         catch { }
     }
 
-    private async Task HandleLinkAsync(ulong authorId, string authorName, ulong msgId)
+    private async Task HandleLinkAsync(RestMessageChannel channel, RestMessage msg)
     {
-        if (_api == null) return;
-
-        if (_scribeRateLimit.TryGetValue(authorId, out var lastUse) && (DateTime.UtcNow - lastUse).TotalMinutes < 2)
+        if (_scribeRateLimit.TryGetValue(msg.Author.Id, out var lastUse) && (DateTime.UtcNow - lastUse).TotalMinutes < 2)
         {
-            await DeleteAndWarnAsync(msgId, $"⏳ <@{authorId}>, stop requested. Wait a moment.");
+            await DeleteAndWarnAsync(channel, msg, $"⏳ <@{msg.Author.Id}>, stop requested. Wait a moment.");
             return;
         }
 
-        if (_db.Ledger.Values.Any(r => r.DiscordId == authorId))
+        if (_db.Ledger.Values.Any(r => r.DiscordId == msg.Author.Id))
         {
-            await DeleteAndWarnAsync(msgId, $"ℹ️ <@{authorId}>, your Discord account is already linked to a Celestial Seal.");
+            await DeleteAndWarnAsync(channel, msg, $"ℹ️ <@{msg.Author.Id}>, your Discord account is already linked to a Celestial Seal.");
             return;
         }
 
-        bool hasRole = await CheckUserRoleAsync(authorId);
+        bool hasRole = await CheckUserRoleAsync(msg.Author.Id);
         if (_config.RequiredDiscordRoleId != 0 && !hasRole)
         {
-            await DeleteAndWarnAsync(msgId, $"❌ <@{authorId}>, you lack the required role to link.");
+            await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you lack the required role to link.");
             return;
         }
 
@@ -150,58 +147,55 @@ public class DiscordService
         {
             string pin = Random.Shared.Next(100000, 999999).ToString();
             
-            var dmChannelJson = await _api.PostAsync("/users/@me/channels", new { recipient_id = authorId.ToString() });
-            if (dmChannelJson == null) throw new Exception();
-            
-            string dmChannelId = dmChannelJson.Value.GetProperty("id").GetString()!;
+            var dm = await msg.Author.CreateDMChannelAsync();
+            if (dm != null)
+            {
+                await dm.SendMessageAsync($"📜 **Authorization PIN:** `{pin}`\nExpires in 15 mins. Enter this PIN as your Server Password in Terraria.");
+                
+                PendingPins[pin] = (msg.Author.Id, DateTime.UtcNow.AddMinutes(15));
+                _scribeRateLimit[msg.Author.Id] = DateTime.UtcNow;
 
-            await _api.PostAsync($"/channels/{dmChannelId}/messages", new { content = $"📜 **Authorization PIN:** `{pin}`\nExpires in 15 mins. Enter this PIN as your Server Password in Terraria." });
-            
-            PendingPins[pin] = (authorId, DateTime.UtcNow.AddMinutes(15));
-            _scribeRateLimit[authorId] = DateTime.UtcNow;
-
-            TShock.Log.ConsoleInfo($"[Metatron] Discord User {authorName} requested a linking PIN.");
-            await DeleteAndWarnAsync(msgId, $"✅ <@{authorId}>, check your DMs for your PIN!");
+                TShock.Log.ConsoleInfo($"[Metatron] Discord User {msg.Author.Username} requested a linking PIN.");
+                await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, check your DMs for your PIN!");
+            }
+            else throw new Exception();
         }
         catch 
         {
-            await DeleteAndWarnAsync(msgId, $"❌ <@{authorId}>, I couldn't DM you! Enable DMs and try again.");
+            await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, I couldn't DM you! Enable DMs and try again.");
         }
     }
 
-    private async Task HandleUnlinkAsync(ulong authorId, string authorName, ulong msgId)
+    private async Task HandleUnlinkAsync(RestMessageChannel channel, RestMessage msg)
     {
-        var record = _db.Ledger.Values.FirstOrDefault(r => r.DiscordId == authorId);
+        var record = _db.Ledger.Values.FirstOrDefault(r => r.DiscordId == msg.Author.Id);
         if (record != null && _db.Ledger.TryRemove(record.AccountName.ToLower(), out _))
         {
-            _ = _db.RemoveSealAsync(authorId);
+            _ = _db.RemoveSealAsync(msg.Author.Id);
             var player = TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == record.AccountName.ToLower());
             player?.Disconnect("Your Discord authorization has been revoked via the Discord channel.");
 
-            TShock.Log.ConsoleInfo($"[Metatron] Discord User {authorName} severed their Celestial Seal.");
-            await DeleteAndWarnAsync(msgId, $"✅ <@{authorId}>, your Celestial Seal has been severed.");
+            TShock.Log.ConsoleInfo($"[Metatron] Discord User {msg.Author.Username} severed their Celestial Seal.");
+            await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, your Celestial Seal has been severed.");
             return;
         }
-        await DeleteAndWarnAsync(msgId, $"❌ <@{authorId}>, you do not have an active seal to sever.");
+        await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you do not have an active seal to sever.");
     }
 
-    private async Task DeleteAndWarnAsync(ulong triggerMsgId, string warning)
+    private async Task DeleteAndWarnAsync(RestMessageChannel channel, RestMessage triggerMsg, string warning)
     {
-        if (_api == null) return;
-
-        var warnMsg = await _api.PostAsync($"/channels/{_config.LinkChannelId}/messages", new { content = warning });
-        _ = _api.DeleteAsync($"/channels/{_config.LinkChannelId}/messages/{triggerMsgId}"); 
+        var warnMsg = await channel.SendMessageAsync(warning);
+        try { await triggerMsg.DeleteAsync(); } catch { }
         
         if (warnMsg != null)
         {
-            string warnMsgId = warnMsg.Value.GetProperty("id").GetString()!;
-            _ = Task.Delay(5000).ContinueWith(_ => _api.DeleteAsync($"/channels/{_config.LinkChannelId}/messages/{warnMsgId}"));
+            _ = Task.Delay(5000).ContinueWith(async _ => { try { await warnMsg.DeleteAsync(); } catch { } });
         }
     }
 
     private async Task UpdateStatusMessageAsync(bool isOnline)
     {
-        if (_config.LinkChannelId == 0 || _api == null || !_statusLock.Wait(0)) return; 
+        if (_discordRest == null || _cachedLinkChannel == null || !_statusLock.Wait(0)) return; 
         try
         {
             long unixTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -211,40 +205,29 @@ public class DiscordService
 
             if (_statusMessageId == 0)
             {
-                var pins = await _api.GetAsync($"/channels/{_config.LinkChannelId}/pins");
-                JsonElement? existingPin = null;
-                
-                if (pins != null && pins.Value.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var pin in pins.Value.EnumerateArray())
-                    {
-                        if (pin.GetProperty("author").GetProperty("id").GetString() == _botUserId.ToString())
-                        {
-                            existingPin = pin;
-                            break;
-                        }
-                    }
-                }
+                var pins = await _cachedLinkChannel.GetPinnedMessagesAsync();
+                var existingPin = pins.FirstOrDefault(p => p.Author.Id == _discordRest.CurrentUser.Id);
                 
                 if (existingPin != null)
                 {
-                    _statusMessageId = ulong.Parse(existingPin.Value.GetProperty("id").GetString()!);
-                    await _api.PatchAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
+                    _statusMessageId = existingPin.Id;
+                    await existingPin.ModifyAsync(statusText);
                 }
                 else
                 {
-                    var newMsg = await _api.PostAsync($"/channels/{_config.LinkChannelId}/messages", new { content = statusText });
+                    var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText);
                     if (newMsg != null)
                     {
-                        _statusMessageId = ulong.Parse(newMsg.Value.GetProperty("id").GetString()!);
-                        await _api.PatchAsync($"/channels/{_config.LinkChannelId}/pins/{_statusMessageId}", new { }); // Put pin
+                        _statusMessageId = newMsg.Id;
+                        await newMsg.PinAsync();
                     }
                 }
             }
             else
             {
-                var response = await _api.PatchAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
-                if (response == null) _statusMessageId = 0; 
+                // We have the ID, but we don't have the object in memory. 
+                // We'll use a fast raw patch rather than fetching the whole message first to save API calls.
+                await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
             }
         }
         catch { }
@@ -253,23 +236,26 @@ public class DiscordService
 
     private async Task<bool> CheckUserRoleAsync(ulong userId)
     {
-        if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0 || _api == null) return true;
+        if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0 || _discordRest == null) return true;
         try
         {
-            var member = await _api.GetAsync($"/guilds/{_config.DiscordGuildId}/members/{userId}");
-            if (member == null) return false;
+            var guild = await _discordRest.GetGuildAsync(_config.DiscordGuildId);
+            if (guild == null) return false;
 
-            return member.Value.GetProperty("roles").EnumerateArray().Any(role => role.GetString() == _config.RequiredDiscordRoleId.ToString());
+            var user = await guild.GetUserAsync(userId);
+            if (user == null) return false;
+
+            return user.RoleIds.Contains(_config.RequiredDiscordRoleId);
         }
         catch { return false; }
     }
 
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
-        if (_config.LinkChannelId == 0 || _api == null) return;
+        if (_cachedLinkChannel == null) return;
         try 
         {
-            await _api.PostAsync($"/channels/{_config.LinkChannelId}/messages", new { content = $"✨ **The Celestial Ledger updates...**\n<@{discordId}> has forged their seal as `{characterName}` and entered the realm!" });
+            await _cachedLinkChannel.SendMessageAsync($"✨ **The Celestial Ledger updates...**\n<@{discordId}> has forged their seal as `{characterName}` and entered the realm!");
         } catch { }
     }
 }
