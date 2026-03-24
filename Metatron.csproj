@@ -20,11 +20,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="$(OutputPath)Discord*.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutputPath)BCrypt*.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutputPath)System.Interactive.Async.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutputPath)System.Linq.Async.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutputPath)Microsoft.Bcl.AsyncInterfaces.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutDir)Discord*.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutDir)BCrypt*.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutDir)System.Interactive.Async.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutDir)System.Linq.Async.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutDir)Microsoft.Bcl.AsyncInterfaces.dll" LinkBase="Resources" />
   </ItemGroup>
 
 </Project>
