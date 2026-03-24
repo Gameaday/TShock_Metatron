@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>2.3.0</Version>
+    <Version>3.0.0</Version>
     <Authors>HistoryLabs</Authors>
   </PropertyGroup>
 
@@ -15,34 +15,16 @@
     <PackageReference Include="TShock" Version="6.1.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" Aliases="BCryptNet" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
-    
     <PackageReference Include="Discord.Net.Rest" Version="3.15.0" />
     <PackageReference Include="System.Linq.Async" Version="6.0.1" />
-    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.34.1" />
   </ItemGroup>
 
-  <Target Name="MergeDlls" AfterTargets="Publish">
-    
-    <ItemGroup>
-      <MergeAssemblies Include="$(PublishDir)Discord.Net.Core.dll" />
-      <MergeAssemblies Include="$(PublishDir)Discord.Net.Rest.dll" />
-      <MergeAssemblies Include="$(PublishDir)System.Linq.Async.dll" />
-      <MergeAssemblies Include="$(PublishDir)System.Interactive.Async.dll" />
-      <MergeAssemblies Include="$(PublishDir)Microsoft.Bcl.AsyncInterfaces.dll" />
-    </ItemGroup>
-    
-    <ILRepack Parallel="true" 
-              Internalize="false" 
-              InputAssemblies="$(PublishDir)$(AssemblyName).dll;@(MergeAssemblies)" 
-              TargetKind="Dll" 
-              OutputFile="$(PublishDir)$(AssemblyName).dll" 
-              LibraryPath="$(PublishDir)" />
-
-    <ItemGroup>
-      <FilesToDelete Include="$(PublishDir)**\*.*" Exclude="$(PublishDir)$(AssemblyName).dll" />
-    </ItemGroup>
-    <Delete Files="@(FilesToDelete)" />
-    
-  </Target>
+  <ItemGroup>
+    <EmbeddedResource Include="$(OutputPath)Discord*.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutputPath)BCrypt*.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutputPath)System.Interactive.Async.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutputPath)System.Linq.Async.dll" LinkBase="Resources" />
+    <EmbeddedResource Include="$(OutputPath)Microsoft.Bcl.AsyncInterfaces.dll" LinkBase="Resources" />
+  </ItemGroup>
 
 </Project>
