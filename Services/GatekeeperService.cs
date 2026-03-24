@@ -71,10 +71,10 @@ public class GatekeeperService
         var player = TShock.Players[args.Msg.whoAmI];
         if (player == null) return;
 
-        // If they are in Limbo, reject ALL packets except Passwords (38) and Chat (82)
+        // If they are in Limbo, reject ALL packets except Passwords (38) and Chat Commands (82)
         if (_limboPlayers.ContainsKey(player.Index))
         {
-            if (args.MsgID != PacketTypes.PasswordSend && args.MsgID != PacketTypes.ChatText)
+            if (args.MsgID != PacketTypes.PasswordSend && (int)args.MsgID != 82)
             {
                 args.Handled = true; 
                 return;
@@ -107,7 +107,6 @@ public class GatekeeperService
             }
             else
             {
-                // If it wasn't a PIN, maybe it's the real server password. Let TShock check it.
                 _loginStrikes.AddOrUpdate(ip, 1, (key, val) => val + 1);
             }
         }
