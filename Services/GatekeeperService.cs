@@ -190,7 +190,7 @@ public class GatekeeperService
             if (account == null)
             {
                 string tempPass = Guid.NewGuid().ToString("N").Substring(0, 10);
-                // OPTIMIZATION: Using TShock's native hasher instead of embedding BCrypt
+                // USING TSHOCK NATIVE HASHER
                 account = new UserAccount(player.Name, TShock.Utils.HashPassword(tempPass), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
                 
