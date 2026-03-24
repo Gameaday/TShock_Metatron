@@ -1,6 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
-using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using TShockAPI;
@@ -9,62 +10,25 @@ using TShockAPI;
 
 namespace Metatron;
 
-public partial class MetatronPlugin
+public class DatabaseService
 {
-    private string BasePath => Path.Combine(TShock.SavePath, "Metatron");
-    private string DbPath => Path.Combine(BasePath, "Archive.sqlite");
-    private string CoreConfigPath => Path.Combine(BasePath, "Core.json");
+    private readonly string _dbPath;
+    private readonly SemaphoreSlim _dbLock = new(1, 1);
+    
+    // The in-memory cache of the database for instant lookups
+    public ConcurrentDictionary<string, MetatronRecord> Ledger { get; } = new();
 
-    private FileSystemWatcher? _configWatcher;
-    private DateTime _lastConfigReload = DateTime.UtcNow;
-
-    private void InitializePersistence()
+    public DatabaseService()
     {
-        Directory.CreateDirectory(BasePath);
-        LoadCoreConfig();
-        InitializeArchive();
-        StartHotReloader();
+        _dbPath = Path.Combine(TShock.SavePath, "Metatron", "Archive.sqlite");
     }
 
-    private void StartHotReloader()
+    public void Initialize()
     {
         try
         {
-            _configWatcher?.Dispose();
-            _configWatcher = new FileSystemWatcher(BasePath, "Core.json")
-            {
-                NotifyFilter = NotifyFilters.LastWrite,
-                EnableRaisingEvents = true
-            };
-            _configWatcher.Changed += (s, e) => {
-                if ((DateTime.UtcNow - _lastConfigReload).TotalSeconds > 1.5) {
-                    _lastConfigReload = DateTime.UtcNow;
-                    Task.Delay(500).ContinueWith(_ => LoadCoreConfig());
-                }
-            };
-        }
-        catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] FileWatcher failed: {ex.Message}"); }
-    }
-
-    private void LoadCoreConfig()
-    {
-        try
-        {
-            if (File.Exists(CoreConfigPath))
-            {
-                var tempConfig = JsonSerializer.Deserialize(File.ReadAllText(CoreConfigPath), MetatronJsonContext.Default.CoreConfig);
-                if (tempConfig != null) _config = tempConfig; 
-            }
-            else File.WriteAllText(CoreConfigPath, JsonSerializer.Serialize(_config, MetatronJsonContext.Default.CoreConfig));
-        }
-        catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Core Config Error: {ex.Message}"); }
-    }
-
-    private void InitializeArchive()
-    {
-        try
-        {
-            using var conn = new SqliteConnection($"Data Source={DbPath}");
+            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
+            using var conn = new SqliteConnection($"Data Source={_dbPath}");
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS Ledger (AccountName TEXT PRIMARY KEY, DiscordId TEXT, Uuid TEXT);";
@@ -75,9 +39,40 @@ public partial class MetatronPlugin
             while (reader.Read())
             {
                 var record = new MetatronRecord(reader.GetString(0), ulong.Parse(reader.GetString(1)), reader.GetString(2));
-                _ledger.TryAdd(record.AccountName.ToLower(), record);
+                Ledger.TryAdd(record.AccountName.ToLower(), record);
             }
         }
         catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] DB Error: {ex.Message}"); }
+    }
+
+    public async Task SaveSealAsync(MetatronRecord record)
+    {
+        Ledger[record.AccountName.ToLower()] = record;
+        await _dbLock.WaitAsync();
+        try {
+            using var conn = new SqliteConnection($"Data Source={_dbPath}");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "INSERT OR REPLACE INTO Ledger VALUES (@n, @d, @u)";
+            cmd.Parameters.AddWithValue("@n", record.AccountName.ToLower());
+            cmd.Parameters.AddWithValue("@d", record.DiscordId.ToString());
+            cmd.Parameters.AddWithValue("@u", record.Uuid);
+            cmd.ExecuteNonQuery();
+        } catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] DB Save Error: {ex.Message}"); }
+        finally { _dbLock.Release(); }
+    }
+
+    public async Task RemoveSealAsync(ulong discordId)
+    {
+        await _dbLock.WaitAsync();
+        try {
+            using var conn = new SqliteConnection($"Data Source={_dbPath}");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM Ledger WHERE DiscordId = @did";
+            cmd.Parameters.AddWithValue("@did", discordId.ToString());
+            cmd.ExecuteNonQuery();
+        } catch { }
+        finally { _dbLock.Release(); }
     }
 }
