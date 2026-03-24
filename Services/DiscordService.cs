@@ -258,8 +258,15 @@ public class DiscordService
         if (_discordRest == null) return;
         try
         {
-            var dm = await _discordRest.GetUserAsync(discordId).ContinueWith(t => t.Result?.CreateDMChannelAsync()).Unwrap();
-            if (dm != null) await dm.SendMessageAsync($"✨ **Seal Forged!** Account: `{characterName}`\n🔑 **Recovery Password:** `{password}`\n*Keep this safe!*");
+            var user = await _discordRest.GetUserAsync(discordId);
+            if (user != null)
+            {
+                var dm = await user.CreateDMChannelAsync();
+                if (dm != null) 
+                {
+                    await dm.SendMessageAsync($"✨ **Seal Forged!** Account: `{characterName}`\n🔑 **Recovery Password:** `{password}`\n*Keep this safe!*");
+                }
+            }
         }
         catch { }
     }
