@@ -27,7 +27,7 @@ public class DiscordService
     // NEW: Chunked Audit Tracking
     private readonly ConcurrentQueue<string> _auditQueue = new();
     private DateTime _lastAuditRefill = DateTime.MinValue;
-
+    private DateTime _lastActiveAudit = DateTime.MinValue;
     public ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> PendingPins { get; } = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
 
@@ -90,7 +90,15 @@ public class DiscordService
                     _lastDiscordHeartbeat = now;
                     _ = UpdateStatusMessageAsync(true);
                 }
-
+                
+                // NEW: Active Player Fast-Track (Audits online players every 15 minutes)
+                if (hasPlayers && (now - _lastActiveAudit).TotalMinutes >= 15)
+                {
+                    _lastActiveAudit = now;
+                    var activeNames = TShock.Players.Where(p => p?.Account != null).Select(p => p.Account.Name.ToLower());
+                    foreach (var name in activeNames) _auditQueue.Enqueue(name);
+                }
+                
                 // 4. CHUNKED AUDIT (Zero extra threads, zero blocking)
                 if (_auditQueue.IsEmpty && (now - _lastAuditRefill).TotalHours >= _config.LedgerAuditIntervalHours)
                 {
