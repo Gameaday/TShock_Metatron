@@ -1,0 +1,43 @@
+name: Build and Upload Plugin Release
+
+# This workflow triggers whenever you publish a new release in GitHub
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-upload:
+    name: Build and Upload DLL
+    runs-on: ubuntu-latest
+    
+    # Required permissions to allow the action to upload files to your release
+    permissions:
+      contents: write 
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          # Note: Change this to match the .NET version your plugin targets!
+          # TShock v5.x uses '6.0.x'
+          # TShock v6.x uses '9.0.x'
+          dotnet-version: '6.0.x' 
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build the plugin
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Upload the DLL to the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # This grabs any .dll built in the Release directory. 
+          # If your plugin produces multiple DLLs (like dependencies) and you ONLY 
+          # want the main plugin file, change this to: "**/bin/Release/**/TShock_Metatron.dll"
+          files: "**/bin/Release/**/*.dll"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
