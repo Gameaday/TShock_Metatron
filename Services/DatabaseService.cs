@@ -12,23 +12,24 @@ namespace Metatron;
 
 public class DatabaseService
 {
-    private readonly string _dbPath;
+    private readonly string _dbConnectionString;
     private readonly SemaphoreSlim _dbLock = new(1, 1);
     
-    // The in-memory cache of the database for instant lookups
     public ConcurrentDictionary<string, MetatronRecord> Ledger { get; } = new();
 
     public DatabaseService()
     {
-        _dbPath = Path.Combine(TShock.SavePath, "Metatron", "Archive.sqlite");
+        // OPTIMIZATION: Enabled Connection Pooling for instant read/writes
+        string path = Path.Combine(TShock.SavePath, "Metatron", "Archive.sqlite");
+        _dbConnectionString = $"Data Source={path};Pooling=True;";
     }
 
     public void Initialize()
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
-            using var conn = new SqliteConnection($"Data Source={_dbPath}");
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(TShock.SavePath, "Metatron"))!);
+            using var conn = new SqliteConnection(_dbConnectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS Ledger (AccountName TEXT PRIMARY KEY, DiscordId TEXT, Uuid TEXT);";
@@ -50,7 +51,7 @@ public class DatabaseService
         Ledger[record.AccountName.ToLower()] = record;
         await _dbLock.WaitAsync();
         try {
-            using var conn = new SqliteConnection($"Data Source={_dbPath}");
+            using var conn = new SqliteConnection(_dbConnectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "INSERT OR REPLACE INTO Ledger VALUES (@n, @d, @u)";
@@ -66,7 +67,7 @@ public class DatabaseService
     {
         await _dbLock.WaitAsync();
         try {
-            using var conn = new SqliteConnection($"Data Source={_dbPath}");
+            using var conn = new SqliteConnection(_dbConnectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM Ledger WHERE DiscordId = @did";
