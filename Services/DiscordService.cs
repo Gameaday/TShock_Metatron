@@ -1,10 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Discord;
@@ -26,10 +22,10 @@ public class DiscordService
     private ulong _statusMessageId = 0;
     
     private readonly SemaphoreSlim _statusLock = new(1, 1);
-    private bool _isPolling = false;
-    private System.Timers.Timer? _discordTimer; 
-    private DateTime _lastDiscordPoll = DateTime.MinValue;
     private DateTime _lastDiscordHeartbeat = DateTime.MinValue;
+
+    // NEW: Modern Cancellation Token for the Dynamic Engine
+    private readonly CancellationTokenSource _engineCts = new();
 
     public ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> PendingPins { get; } = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
@@ -60,54 +56,60 @@ public class DiscordService
                 }
             }
 
-            TShock.Log.ConsoleInfo("[Metatron] Scribe initialized on a dedicated background thread.");
+            TShock.Log.ConsoleInfo("[Metatron] Scribe Engine initialized on a dynamic background thread.");
             _lastDiscordHeartbeat = DateTime.UtcNow; 
-            _lastDiscordPoll = DateTime.UtcNow; 
-
+            
             _ = Task.Run(() => UpdateStatusMessageAsync(true));
 
-            _discordTimer = new System.Timers.Timer(1000);
-            _discordTimer.Elapsed += OnTimerPulse;
-            _discordTimer.Start();
+            // Start the Dynamic Polling Engine
+            _ = Task.Run(() => PollingEngineAsync(), _engineCts.Token);
         }
         catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Discord Login Failed: {ex.Message}"); }
     }
 
     public void Stop()
     {
-        _discordTimer?.Stop();
+        _engineCts.Cancel();
         try { UpdateStatusMessageAsync(false).GetAwaiter().GetResult(); } catch { }
     }
 
-    private void OnTimerPulse(object? sender, System.Timers.ElapsedEventArgs e)
+    // NEW: The Dynamic Polling Engine
+    private async Task PollingEngineAsync()
     {
-        if (MetatronPlugin.IsShuttingDown) return;
-        var now = DateTime.UtcNow;
-        
-        // Clean expired PINs
-        var expiredPins = PendingPins.Where(kvp => now > kvp.Value.Expiry).Select(kvp => kvp.Key).ToList();
-        foreach (var expiredPin in expiredPins) PendingPins.TryRemove(expiredPin, out _);
-
-        bool hasPlayers = TShock.Players.Any(p => p != null && p.Active);
-        int currentPollInterval = hasPlayers ? _config.PollIntervalSeconds : 60; 
-
-        if ((now - _lastDiscordPoll).TotalSeconds >= currentPollInterval)
+        while (!_engineCts.IsCancellationRequested && !MetatronPlugin.IsShuttingDown)
         {
-            _lastDiscordPoll = now;
-            _ = Task.Run(PollLinkChannelAsync);
-        }
+            try
+            {
+                var now = DateTime.UtcNow;
 
-        if ((now - _lastDiscordHeartbeat).TotalSeconds >= 150)
-        {
-            _lastDiscordHeartbeat = now;
-            _ = Task.Run(() => UpdateStatusMessageAsync(true));
+                // 1. Memory Cleanup
+                var expiredPins = PendingPins.Where(kvp => now > kvp.Value.Expiry).Select(kvp => kvp.Key).ToList();
+                foreach (var pin in expiredPins) PendingPins.TryRemove(pin, out _);
+
+                // 2. Execute Poll
+                await PollLinkChannelAsync();
+
+                // 3. Execute Heartbeat
+                if ((now - _lastDiscordHeartbeat).TotalSeconds >= 150)
+                {
+                    _lastDiscordHeartbeat = now;
+                    _ = UpdateStatusMessageAsync(true);
+                }
+
+                // 4. Dynamic Sleep (Calculates exact needed rest based on server population)
+                bool hasPlayers = TShock.Players.Any(p => p != null && p.Active);
+                int sleepSeconds = hasPlayers ? _config.PollIntervalSeconds : 60; 
+
+                await Task.Delay(TimeSpan.FromSeconds(sleepSeconds), _engineCts.Token);
+            }
+            catch (TaskCanceledException) { break; } // Graceful shutdown
+            catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Engine Fault: {ex.Message}"); }
         }
     }
 
     private async Task PollLinkChannelAsync()
     {
-        if (_discordRest == null || _cachedLinkChannel == null || _isPolling || MetatronPlugin.IsShuttingDown) return;
-        _isPolling = true;
+        if (_discordRest == null || _cachedLinkChannel == null) return;
 
         try
         {
@@ -128,7 +130,6 @@ public class DiscordService
             }
         }
         catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] Scribe Poll Error: {ex.Message}"); }
-        finally { _isPolling = false; }
     }
 
     private async Task HandleLinkAsync(IRestMessageChannel channel, IMessage msg)
@@ -236,7 +237,6 @@ public class DiscordService
         if (_config.DiscordGuildId == 0 || _config.RequiredDiscordRoleId == 0 || _discordRest == null) return true;
         try
         {
-            // OPTIMIZATION: Use the native Discord API wrapper instead of raw HTTP requests
             var guild = await _discordRest.GetGuildAsync(_config.DiscordGuildId);
             if (guild == null) return false;
 
@@ -259,7 +259,6 @@ public class DiscordService
         catch { return $"ID: {userId} (Lookup Failed)"; }
     }
 
-    // NEW: The Celebration Broadcaster
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
         if (_cachedLinkChannel == null) return;
