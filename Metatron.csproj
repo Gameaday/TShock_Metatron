@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,23 +11,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TShock" Version="6.1.0" />
-    
+    <PackageReference Include="TShock" Version="6.1.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" ExcludeAssets="runtime" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" Aliases="BCryptNet" />
-    
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
   </ItemGroup>
 
   <Target Name="EmbedDependencies" AfterTargets="ResolveAssemblyReferences">
     <ItemGroup>
-      <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" 
-                        Condition="$([System.String]::Copy('%(FileName)').StartsWith('BCrypt'))">
+      <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" Condition="$([System.String]::Copy('%(FileName)').StartsWith('BCrypt'))">
         <LogicalName>Metatron.Resources.%(FileName)%(Extension)</LogicalName>
       </EmbeddedResource>
     </ItemGroup>
   </Target>
 
-  <Target Name="CleanWorkshop" AfterTargets="Build">
+  <Target Name="CleanWorkshop" AfterTargets="Build;Publish">
     <ItemGroup>
       <JunkDlls Include="$(OutDir)*.dll" Exclude="$(OutDir)$(TargetFileName)" />
       <JunkJson Include="$(OutDir)*.json" Exclude="$(OutDir)$(AssemblyName).deps.json" />
@@ -36,5 +32,4 @@
     <Delete Files="@(JunkDlls)" />
     <Delete Files="@(JunkJson)" />
   </Target>
-
 </Project>
