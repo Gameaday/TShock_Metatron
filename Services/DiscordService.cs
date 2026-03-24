@@ -259,4 +259,15 @@ public class DiscordService
         }
         catch { return $"ID: {userId} (Lookup Failed)"; }
     }
+
+    // NEW: The Celebration Broadcaster
+    public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
+    {
+        if (_cachedLinkChannel == null) return;
+        try 
+        {
+            await _cachedLinkChannel.SendMessageAsync($"✨ **The Celestial Ledger updates...**\n<@{discordId}> has forged their seal as `{characterName}` and entered the realm!");
+        } 
+        catch { TShock.Log.ConsoleError("[Metatron] Failed to post success message to Discord."); }
+    }
 }
