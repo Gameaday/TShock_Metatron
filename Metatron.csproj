@@ -19,12 +19,17 @@
     <PackageReference Include="System.Linq.Async" Version="6.0.1" />
   </ItemGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="$(OutDir)Discord*.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutDir)BCrypt*.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutDir)System.Interactive.Async.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutDir)System.Linq.Async.dll" LinkBase="Resources" />
-    <EmbeddedResource Include="$(OutDir)Microsoft.Bcl.AsyncInterfaces.dll" LinkBase="Resources" />
-  </ItemGroup>
+  <Target Name="EmbedDependencies" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <EmbeddedResource Include="@(ReferenceCopyLocalPaths)" 
+                        Condition="$([System.String]::Copy('%(FileName)').StartsWith('Discord')) Or 
+                                   $([System.String]::Copy('%(FileName)').StartsWith('BCrypt')) Or 
+                                   $([System.String]::Copy('%(FileName)').StartsWith('System.Interactive')) Or 
+                                   $([System.String]::Copy('%(FileName)').StartsWith('System.Linq')) Or 
+                                   $([System.String]::Copy('%(FileName)').StartsWith('Microsoft.Bcl'))">
+        <LogicalName>Metatron.Resources.%(FileName)%(Extension)</LogicalName>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
 
 </Project>
