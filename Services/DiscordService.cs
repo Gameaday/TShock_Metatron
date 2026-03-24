@@ -258,7 +258,7 @@ public class DiscordService
             await _cachedLinkChannel.SendMessageAsync($"✨ **The Celestial Ledger updates...**\n<@{discordId}> has forged their seal as `{characterName}` and entered the realm!");
         } catch { }
     }
-}
+    
 public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
     {
         if (_api == null) return;
@@ -278,3 +278,4 @@ public async Task SendRecoveryPasswordAsync(ulong discordId, string characterNam
         }
         catch { TShock.Log.ConsoleError("[Metatron] Failed to DM recovery password."); }
     }
+}
