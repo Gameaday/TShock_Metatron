@@ -174,7 +174,8 @@ public class DiscordService
 
         try 
         {
-            string pin = Random.Shared.Next(100000, 999999).ToString();
+            // 🛡️ SECURITY: Use cryptographically secure RNG for authorization PINs to prevent predictability
+            string pin = System.Security.Cryptography.RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
             var dm = await msg.Author.CreateDMChannelAsync();
             if (dm != null)
             {
