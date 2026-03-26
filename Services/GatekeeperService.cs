@@ -156,7 +156,10 @@ public class GatekeeperService
             var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
             if (account == null)
             {
-                newPassword = Guid.NewGuid().ToString("N").Substring(0, 10);
+                // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
+                var randomBytes = new byte[5];
+                System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+                newPassword = Convert.ToHexString(randomBytes).ToLower();
                 account = new UserAccount(player.Name, BC.HashPassword(newPassword), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
             }
