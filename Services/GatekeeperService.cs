@@ -69,16 +69,29 @@ public class GatekeeperService
         {
             using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
             string entered = reader.ReadString();
-            if (_discord.PendingPins.TryRemove(entered, out var data))
+            if (_discord.PendingPins.TryGetValue(entered, out var data))
             {
-                if (DateTime.UtcNow > data.Expiry) return;
-
-                if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record) && record.DiscordId != data.DiscordId && !player.IsLoggedIn)
+                if (DateTime.UtcNow > data.Expiry)
                 {
-                    player.SendErrorMessage("Identity mismatch! This account is pinned to another Discord user. Log in with your recovery password first.");
+                    _discord.PendingPins.TryRemove(entered, out _);
+                    return;
+                }
+
+                if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
+                {
+                    if (record.DiscordId != data.DiscordId && !player.IsLoggedIn)
+                    {
+                        player.SendErrorMessage("Identity mismatch! This account is pinned to another Discord user. Log in with your recovery password first.");
+                        args.Handled = true; return;
+                    }
+                }
+                else if (TShock.UserAccounts.GetUserAccountByName(player.Name) != null && !player.IsLoggedIn)
+                {
+                    player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
                     args.Handled = true; return;
                 }
 
+                _discord.PendingPins.TryRemove(entered, out _);
                 args.Handled = true; FinalizeLinkage(player, data.DiscordId);
             }
         }
@@ -131,14 +144,29 @@ public class GatekeeperService
     private void VerifyCommand(CommandArgs args)
     {
         if (!_limboPlayers.ContainsKey(args.Player.Index)) { args.Player.SendInfoMessage("Already verified."); return; }
-        if (args.Parameters.Count == 0 || !_discord.PendingPins.TryRemove(args.Parameters[0], out var data)) { args.Player.SendErrorMessage("Invalid PIN."); return; }
+        if (args.Parameters.Count == 0 || !_discord.PendingPins.TryGetValue(args.Parameters[0], out var data)) { args.Player.SendErrorMessage("Invalid PIN."); return; }
 
-        if (_db.Ledger.TryGetValue(args.Player.Name.ToLower(), out var record) && record.DiscordId != data.DiscordId && !args.Player.IsLoggedIn)
+        if (DateTime.UtcNow > data.Expiry)
         {
-            args.Player.SendErrorMessage("Identity mismatch! Log in with your recovery password first to confirm ownership.");
+            _discord.PendingPins.TryRemove(args.Parameters[0], out _);
+            args.Player.SendErrorMessage("Invalid PIN."); return;
+        }
+
+        if (_db.Ledger.TryGetValue(args.Player.Name.ToLower(), out var record))
+        {
+            if (record.DiscordId != data.DiscordId && !args.Player.IsLoggedIn)
+            {
+                args.Player.SendErrorMessage("Identity mismatch! Log in with your recovery password first to confirm ownership.");
+                return;
+            }
+        }
+        else if (TShock.UserAccounts.GetUserAccountByName(args.Player.Name) != null && !args.Player.IsLoggedIn)
+        {
+            args.Player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
             return;
         }
 
+        _discord.PendingPins.TryRemove(args.Parameters[0], out _);
         FinalizeLinkage(args.Player, data.DiscordId);
     }
 
