@@ -69,11 +69,49 @@ public class GatekeeperService
         {
             using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
             string entered = reader.ReadString();
+
+            bool isPinGuess = entered.Length == 6 && entered.All(char.IsDigit);
+            string ip = player.IP;
+            var now = DateTime.UtcNow;
+
+            if (isPinGuess)
+            {
+                var strikeData = _verifyStrikes.GetOrAdd(ip, (0, now));
+                if ((now - strikeData.FirstStrike).TotalMinutes > 15)
+                {
+                    strikeData = (0, now);
+                    _verifyStrikes[ip] = strikeData;
+                }
+
+                if (strikeData.Strikes >= 5)
+                {
+                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    args.Handled = true;
+                    return;
+                }
+            }
+
             if (_discord.PendingPins.TryGetValue(entered, out var data))
             {
                 if (DateTime.UtcNow > data.Expiry)
                 {
                     _discord.PendingPins.TryRemove(entered, out _);
+
+                    if (isPinGuess)
+                    {
+                        var currentStrikeData = _verifyStrikes.GetOrAdd(ip, (0, now));
+                        var newStrikes = currentStrikeData.Strikes + 1;
+                        _verifyStrikes[ip] = (newStrikes, currentStrikeData.FirstStrike);
+
+                        if (newStrikes >= 5)
+                        {
+                            player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            args.Handled = true;
+                            return;
+                        }
+                        player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                    }
+                    args.Handled = true;
                     return;
                 }
 
@@ -91,8 +129,22 @@ public class GatekeeperService
                     args.Handled = true; return;
                 }
 
+                _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
                 args.Handled = true; FinalizeLinkage(player, data.DiscordId);
+            }
+            else if (isPinGuess)
+            {
+                var currentStrikeData = _verifyStrikes.GetOrAdd(ip, (0, now));
+                var newStrikes = currentStrikeData.Strikes + 1;
+                _verifyStrikes[ip] = (newStrikes, currentStrikeData.FirstStrike);
+
+                if (newStrikes >= 5)
+                {
+                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    args.Handled = true;
+                    return;
+                }
             }
         }
     }
