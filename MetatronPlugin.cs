@@ -112,7 +112,7 @@ public class MetatronPlugin : TerrariaPlugin
         {
             string target = string.Join(" ", args.Parameters.Skip(1)).ToLower();
             if (_database?.Ledger.TryGetValue(target, out var record) == true)
-                args.Player.SendInfoMessage($"🔍 [Metatron] Identity: Discord {record.DiscordId} | UUID {record.Uuid}");
+                args.Player.SendInfoMessage($"🔍 [Metatron] Identity: Discord {record.DiscordId} | UUID [REDACTED]");
             else args.Player.SendErrorMessage($"[Metatron] No record found for '{target}'.");
         }
         else if (cmd == "unlink" && args.Parameters.Count > 1)
