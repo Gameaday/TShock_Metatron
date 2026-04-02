@@ -157,20 +157,18 @@ public class GatekeeperService
         bool isVerified = false;
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
-            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
+            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record) &&
+               (record.Uuid.StartsWith("$2") ? BC.Verify(player.UUID, record.Uuid) : record.Uuid == player.UUID))
             {
-                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
-                if (isHashedUuid ? BC.Verify(player.UUID, record.Uuid) : record.Uuid == player.UUID)
+                isVerified = true;
+
+                // Asynchronous upgrade path for legacy plaintext UUIDs
+                if (!record.Uuid.StartsWith("$2"))
                 {
-                    isVerified = true;
+                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
+                }
 
-                    // Asynchronous upgrade path for legacy plaintext UUIDs
-                    if (!isHashedUuid)
-                    {
-                        _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
-                    }
-
-                    if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
+                if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
                 
                 // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
                 _ = Task.Run(async () => {
