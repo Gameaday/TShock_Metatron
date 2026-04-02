@@ -36,7 +36,7 @@ public class GatekeeperService
     public void EnableHooks()
     {
         TShock.Config.Settings.RequireLogin = true;
-        if (!_config.EnableFrictionlessAuth) TShock.Config.Settings.DisableUUIDLogin = true;
+        TShock.Config.Settings.DisableUUIDLogin = true; // Always disable native UUID login
 
         ServerApi.Hooks.NetGetData.Register(_plugin, OnGetData, 100);
         ServerApi.Hooks.ServerJoin.Register(_plugin, OnJoin, int.MaxValue);
@@ -157,9 +157,33 @@ public class GatekeeperService
         bool isVerified = false;
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
-            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record) && record.Uuid == player.UUID)
+            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
             {
+                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
+                bool uuidMatch;
+                if (isHashedUuid)
+                {
+                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
+                    catch (Exception ex)
+                    {
+                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
+                        uuidMatch = false;
+                    }
+                }
+                else
+                {
+                    uuidMatch = record.Uuid == player.UUID;
+                }
+                if (uuidMatch)
+                {
                 isVerified = true;
+
+                // Asynchronous upgrade path for legacy plaintext UUIDs
+                if (!isHashedUuid)
+                {
+                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
+                }
+
                 if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
                 
                 // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
@@ -174,6 +198,7 @@ public class GatekeeperService
                         }
                     }
                 });
+                }
             }
         }
 
@@ -280,13 +305,13 @@ public class GatekeeperService
                 var randomBytes = new byte[5];
                 System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
                 newPassword = Convert.ToHexString(randomBytes).ToLower();
-                account = new UserAccount(player.Name, BC.HashPassword(newPassword), player.UUID, TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                account = new UserAccount(player.Name, BC.HashPassword(newPassword), "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
                 TShock.UserAccounts.AddUserAccount(account);
             }
             player.Account = account; 
         }
 
-        _ = _db.SaveSealAsync(new MetatronRecord(player.Account.Name, discordId, player.UUID));
+        _ = _db.SaveSealAsync(new MetatronRecord(player.Account.Name, discordId, BC.HashPassword(player.UUID)));
         _limboPlayers.TryRemove(player.Index, out _);
         player.mute = false; player.Heal();
         player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
