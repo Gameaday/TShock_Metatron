@@ -157,13 +157,29 @@ public class GatekeeperService
         bool isVerified = false;
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
-            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record) &&
-               (record.Uuid.StartsWith("$2") ? BC.Verify(player.UUID, record.Uuid) : record.Uuid == player.UUID))
+            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
             {
+                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
+                bool uuidMatch;
+                if (isHashedUuid)
+                {
+                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
+                    catch (Exception ex)
+                    {
+                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
+                        uuidMatch = false;
+                    }
+                }
+                else
+                {
+                    uuidMatch = record.Uuid == player.UUID;
+                }
+                if (uuidMatch)
+                {
                 isVerified = true;
 
                 // Asynchronous upgrade path for legacy plaintext UUIDs
-                if (!record.Uuid.StartsWith("$2"))
+                if (!isHashedUuid)
                 {
                     _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
                 }
@@ -182,6 +198,7 @@ public class GatekeeperService
                         }
                     }
                 });
+                }
             }
         }
 
