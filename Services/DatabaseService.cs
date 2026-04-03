@@ -66,6 +66,15 @@ public class DatabaseService
 
     public async Task RemoveSealAsync(ulong discordId)
     {
+        // Remove from in-memory ledger first
+        foreach (var kvp in Ledger)
+        {
+            if (kvp.Value.DiscordId == discordId)
+            {
+                Ledger.TryRemove(kvp.Key, out _);
+            }
+        }
+
         await _dbLock.WaitAsync();
         try {
             using var conn = new SqliteConnection(_dbConnectionString);
