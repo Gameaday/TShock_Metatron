@@ -145,6 +145,9 @@ public class GatekeeperService
                     args.Handled = true;
                     return;
                 }
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
+                return;
             }
         }
     }
@@ -154,56 +157,61 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
-        bool isVerified = false;
+        // Immediately quarantine player
+        _limboPlayers[player.Index] = DateTime.UtcNow;
+
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
             if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
             {
-                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
-                bool uuidMatch;
-                if (isHashedUuid)
+                // Offload expensive BCrypt hashing to a background thread to prevent main thread DoS
+                _ = Task.Run(async () =>
                 {
-                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
-                    catch (Exception ex)
+                    bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
+                    bool uuidMatch;
+                    if (isHashedUuid)
                     {
-                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
-                        uuidMatch = false;
-                    }
-                }
-                else
-                {
-                    uuidMatch = record.Uuid == player.UUID;
-                }
-                if (uuidMatch)
-                {
-                isVerified = true;
-
-                // Asynchronous upgrade path for legacy plaintext UUIDs
-                if (!isHashedUuid)
-                {
-                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
-                }
-
-                if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
-                
-                // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
-                _ = Task.Run(async () => {
-                    bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                    if (!valid)
-                    {
-                        if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                        try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
+                        catch (Exception ex)
                         {
-                            await _db.RemoveSealAsync(record.DiscordId);
-                            player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
+                            uuidMatch = false;
+                        }
+                    }
+                    else
+                    {
+                        uuidMatch = record.Uuid == player.UUID;
+                    }
+
+                    if (uuidMatch)
+                    {
+                        // Asynchronous upgrade path for legacy plaintext UUIDs
+                        if (!isHashedUuid)
+                        {
+                            _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
+                        }
+
+                        if (_config.EnableFrictionlessAuth) {
+                            var acc = TShock.UserAccounts.GetUserAccountByName(player.Name);
+                            if (acc != null) player.Account = acc;
+                        }
+
+                        _limboPlayers.TryRemove(player.Index, out _);
+
+                        // Fire-and-forget audit
+                        bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                        if (!valid)
+                        {
+                            if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                            {
+                                await _db.RemoveSealAsync(record.DiscordId);
+                                player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            }
                         }
                     }
                 });
-                }
             }
         }
-
-        if (!isVerified) _limboPlayers[player.Index] = DateTime.UtcNow;
-        else _limboPlayers.TryRemove(player.Index, out _);
     }
 
     private void OnGreet(GreetPlayerEventArgs args)
