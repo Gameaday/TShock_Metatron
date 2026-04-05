@@ -154,56 +154,62 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
-        bool isVerified = false;
+        // Immediately limbo all players - verify asynchronously
+        _limboPlayers[player.Index] = DateTime.UtcNow;
+
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
             if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
             {
-                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
-                bool uuidMatch;
-                if (isHashedUuid)
-                {
-                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
-                        uuidMatch = false;
-                    }
-                }
-                else
-                {
-                    uuidMatch = record.Uuid == player.UUID;
-                }
-                if (uuidMatch)
-                {
-                isVerified = true;
-
-                // Asynchronous upgrade path for legacy plaintext UUIDs
-                if (!isHashedUuid)
-                {
-                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
-                }
-
-                if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
-                
-                // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
+                // Offload computationally expensive BCrypt verification to background thread to prevent main thread blocking (DoS prevention)
                 _ = Task.Run(async () => {
-                    bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                    if (!valid)
+                    bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
+                    bool uuidMatch;
+                    if (isHashedUuid)
                     {
-                        if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                        try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
+                        catch (Exception ex)
                         {
-                            await _db.RemoveSealAsync(record.DiscordId);
-                            player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
+                            uuidMatch = false;
                         }
                     }
+                    else
+                    {
+                        uuidMatch = record.Uuid == player.UUID;
+                    }
+
+                    if (uuidMatch)
+                    {
+                        // Asynchronous upgrade path for legacy plaintext UUIDs
+                        if (!isHashedUuid)
+                        {
+                            _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
+                        }
+
+                        if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
+
+                        bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                        if (!valid)
+                        {
+                            if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                            {
+                                await _db.RemoveSealAsync(record.DiscordId);
+                                player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            }
+                            return;
+                        }
+
+                        // Release from limbo
+                        _limboPlayers.TryRemove(player.Index, out _);
+                        player.GodMode = false;
+                        player.SetBuff(163, 0, true);
+                        player.mute = false;
+                        player.Heal();
+                    }
                 });
-                }
             }
         }
-
-        if (!isVerified) _limboPlayers[player.Index] = DateTime.UtcNow;
-        else _limboPlayers.TryRemove(player.Index, out _);
     }
 
     private void OnGreet(GreetPlayerEventArgs args)
@@ -289,36 +295,38 @@ public class GatekeeperService
 
     private void FinalizeLinkage(TSPlayer player, ulong discordId)
     {
-        player.GodMode = false; 
-        
-        // FIX: Setting buff time to 0 safely clears it natively through TShock
-        player.SetBuff(163, 0, true); 
-        
-        string? newPassword = null;
+        // Offload computationally expensive BCrypt hashing to background thread to prevent main network thread blocking (DoS prevention)
+        _ = Task.Run(() => {
+            string? newPassword = null;
 
-        if (player.Account == null)
-        {
-            var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
-            if (account == null)
+            if (player.Account == null)
             {
-                // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
-                var randomBytes = new byte[5];
-                System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
-                newPassword = Convert.ToHexString(randomBytes).ToLower();
-                account = new UserAccount(player.Name, BC.HashPassword(newPassword), "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
-                TShock.UserAccounts.AddUserAccount(account);
+                var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
+                if (account == null)
+                {
+                    // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
+                    var randomBytes = new byte[5];
+                    System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+                    newPassword = Convert.ToHexString(randomBytes).ToLower();
+                    account = new UserAccount(player.Name, BC.HashPassword(newPassword), "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+                    TShock.UserAccounts.AddUserAccount(account);
+                }
+                player.Account = account;
             }
-            player.Account = account; 
-        }
 
-        _ = _db.SaveSealAsync(new MetatronRecord(player.Account.Name, discordId, BC.HashPassword(player.UUID)));
-        _limboPlayers.TryRemove(player.Index, out _);
-        player.mute = false; player.Heal();
-        player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+            _ = _db.SaveSealAsync(new MetatronRecord(player.Account.Name, discordId, BC.HashPassword(player.UUID)));
+            _limboPlayers.TryRemove(player.Index, out _);
 
-        _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, player.Index); NetMessage.SendData(7, player.Index); });
-        _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
-        if (newPassword != null && _config.ShowTemporaryPasswords) _ = _discord.SendRecoveryPasswordAsync(discordId, player.Name, newPassword);
+            player.GodMode = false;
+            // FIX: Setting buff time to 0 safely clears it natively through TShock
+            player.SetBuff(163, 0, true);
+            player.mute = false; player.Heal();
+            player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+
+            _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, player.Index); NetMessage.SendData(7, player.Index); });
+            _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
+            if (newPassword != null && _config.ShowTemporaryPasswords) _ = _discord.SendRecoveryPasswordAsync(discordId, player.Name, newPassword);
+        });
     }
 
     private void UnlinkCommand(CommandArgs args)
