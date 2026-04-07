@@ -25,6 +25,7 @@ public class GatekeeperService
 
     private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
     private readonly ConcurrentDictionary<string, (int Strikes, DateTime FirstStrike)> _verifyStrikes = new();
+    private readonly ConcurrentQueue<(int Index, string Name, string Uuid, bool Authenticated, ulong DiscordId)> _unlockQueue = new();
     
     private int _tickCounter = 0;
 
@@ -154,56 +155,51 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
-        bool isVerified = false;
+        // Immediately put player in limbo to prevent interaction during auth check
+        _limboPlayers[player.Index] = DateTime.UtcNow;
+
         if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
         {
             if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
             {
-                bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
-                bool uuidMatch;
-                if (isHashedUuid)
-                {
-                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
-                        uuidMatch = false;
-                    }
-                }
-                else
-                {
-                    uuidMatch = record.Uuid == player.UUID;
-                }
-                if (uuidMatch)
-                {
-                isVerified = true;
+                // Capture state before background thread to prevent TOCTOU
+                int pIndex = player.Index;
+                string pName = player.Name;
+                string pUuid = player.UUID;
 
-                // Asynchronous upgrade path for legacy plaintext UUIDs
-                if (!isHashedUuid)
-                {
-                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
-                }
-
-                if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
-                
-                // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
                 _ = Task.Run(async () => {
-                    bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                    if (!valid)
+                    bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
+                    bool uuidMatch;
+                    if (isHashedUuid)
                     {
-                        if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                        try { uuidMatch = BC.Verify(pUuid, record.Uuid); }
+                        catch (Exception ex)
                         {
-                            await _db.RemoveSealAsync(record.DiscordId);
-                            player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{pName}' (malformed hash?): {ex.Message}");
+                            uuidMatch = false;
                         }
                     }
+                    else
+                    {
+                        uuidMatch = record.Uuid == pUuid;
+                    }
+
+                    if (uuidMatch)
+                    {
+                        bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+
+                        // Asynchronous upgrade path for legacy plaintext UUIDs
+                        if (!isHashedUuid && valid)
+                        {
+                            _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(pUuid)));
+                        }
+
+                        // Push to queue for main-thread evaluation
+                        _unlockQueue.Enqueue((pIndex, pName, pUuid, valid, record.DiscordId));
+                    }
                 });
-                }
             }
         }
-
-        if (!isVerified) _limboPlayers[player.Index] = DateTime.UtcNow;
-        else _limboPlayers.TryRemove(player.Index, out _);
     }
 
     private void OnGreet(GreetPlayerEventArgs args)
@@ -331,6 +327,37 @@ public class GatekeeperService
 
     private void OnPulse(EventArgs args)
     {
+        // Process the unlock queue safely on the main thread
+        while (_unlockQueue.TryDequeue(out var req))
+        {
+            var p = TShock.Players[req.Index];
+
+            // TOCTOU check: Ensure player slot hasn't been recycled
+            if (p != null && p.Active && p.Name == req.Name && p.UUID == req.Uuid)
+            {
+                if (!req.Authenticated)
+                {
+                    if (_db.Ledger.TryRemove(req.Name.ToLower(), out _))
+                    {
+                        _ = _db.RemoveSealAsync(req.DiscordId);
+                        p.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                    }
+                }
+                else
+                {
+                    if (_config.EnableFrictionlessAuth)
+                    {
+                        var acc = TShock.UserAccounts.GetUserAccountByName(req.Name);
+                        if (acc != null) p.Account = acc;
+                    }
+                    p.GodMode = false;
+                    p.SetBuff(163, 0, true);
+                    p.mute = false;
+                    _limboPlayers.TryRemove(req.Index, out _);
+                }
+            }
+        }
+
         if (++_tickCounter < 60) return;
         _tickCounter = 0;
         if (_limboPlayers.Count == 0) return;
