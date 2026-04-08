@@ -25,6 +25,8 @@ public class GatekeeperService
 
     private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
     private readonly ConcurrentDictionary<string, (int Strikes, DateTime FirstStrike)> _verifyStrikes = new();
+    private readonly ConcurrentDictionary<string, (int Attempts, DateTime FirstAttempt)> _joinRateLimit = new();
+    private readonly ConcurrentQueue<Action> _mainThreadActions = new();
     
     private int _tickCounter = 0;
 
@@ -154,56 +156,92 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
-        bool isVerified = false;
-        if (!string.IsNullOrWhiteSpace(player.Name) && !string.IsNullOrWhiteSpace(player.UUID))
+        // Place in limbo immediately
+        _limboPlayers[args.Who] = DateTime.UtcNow;
+
+        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID)) return;
+
+        string pName = player.Name;
+        string pUuid = player.UUID;
+        int pIndex = args.Who;
+        string ip = player.IP;
+
+        var now = DateTime.UtcNow;
+        var rateData = _joinRateLimit.GetOrAdd(ip, (0, now));
+        if ((now - rateData.FirstAttempt).TotalMinutes > 1)
         {
-            if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
+            rateData = (0, now);
+            _joinRateLimit[ip] = rateData;
+        }
+
+        var newAttempts = rateData.Attempts + 1;
+        _joinRateLimit[ip] = (newAttempts, rateData.FirstAttempt);
+
+        if (newAttempts > 5)
+        {
+            player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again.");
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            if (_db.Ledger.TryGetValue(pName.ToLower(), out var record))
             {
                 bool isHashedUuid = record.Uuid.StartsWith("$2", StringComparison.Ordinal);
-                bool uuidMatch;
+                bool uuidMatch = false;
                 if (isHashedUuid)
                 {
-                    try { uuidMatch = BC.Verify(player.UUID, record.Uuid); }
-                    catch (Exception ex)
-                    {
-                        TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{player.Name}' (malformed hash?): {ex.Message}");
-                        uuidMatch = false;
-                    }
+                    try { uuidMatch = BC.Verify(pUuid, record.Uuid); }
+                    catch (Exception ex) { TShock.Log.ConsoleError($"[Metatron] BCrypt verify failed for '{pName}' (malformed hash?): {ex.Message}"); }
                 }
                 else
                 {
-                    uuidMatch = record.Uuid == player.UUID;
+                    uuidMatch = record.Uuid == pUuid;
                 }
+
                 if (uuidMatch)
                 {
-                isVerified = true;
-
-                // Asynchronous upgrade path for legacy plaintext UUIDs
-                if (!isHashedUuid)
-                {
-                    _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(player.UUID)));
-                }
-
-                if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(player.Name); if (acc != null) player.Account = acc; }
-                
-                // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
-                _ = Task.Run(async () => {
-                    bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                    if (!valid)
+                    _mainThreadActions.Enqueue(() =>
                     {
-                        if (_db.Ledger.TryRemove(player.Name.ToLower(), out _))
+                        var onlinePlayer = TShock.Players[pIndex];
+                        // TOCTOU check: Ensure player slot hasn't been recycled
+                        if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
                         {
-                            await _db.RemoveSealAsync(record.DiscordId);
-                            player.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            _limboPlayers.TryRemove(pIndex, out _);
+
+                            // Asynchronous upgrade path for legacy plaintext UUIDs
+                            if (!isHashedUuid)
+                            {
+                                _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(pUuid)));
+                            }
+
+                            if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
+
+                            // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
+                            _ = Task.Run(async () => {
+                                bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                                if (!valid)
+                                {
+                                    if (_db.Ledger.TryRemove(pName.ToLower(), out _))
+                                    {
+                                        await _db.RemoveSealAsync(record.DiscordId);
+                                        _mainThreadActions.Enqueue(() =>
+                                        {
+                                            // TOCTOU check again
+                                            var currentPlayer = TShock.Players[pIndex];
+                                            if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
+                                            {
+                                                currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                            }
+                                        });
+                                    }
+                                }
+                            });
                         }
-                    }
-                });
+                    });
                 }
             }
-        }
-
-        if (!isVerified) _limboPlayers[player.Index] = DateTime.UtcNow;
-        else _limboPlayers.TryRemove(player.Index, out _);
+        });
     }
 
     private void OnGreet(GreetPlayerEventArgs args)
@@ -331,6 +369,11 @@ public class GatekeeperService
 
     private void OnPulse(EventArgs args)
     {
+        while (_mainThreadActions.TryDequeue(out var action))
+        {
+            action();
+        }
+
         if (++_tickCounter < 60) return;
         _tickCounter = 0;
         if (_limboPlayers.Count == 0) return;
