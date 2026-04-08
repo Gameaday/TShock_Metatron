@@ -206,9 +206,15 @@ public class GatekeeperService
                                     if (_db.Ledger.TryRemove(pName.ToLower(), out _))
                                     {
                                         await _db.RemoveSealAsync(record.DiscordId);
-                                        // Need to safely disconnect on main thread, but this is an existing issue in the original code,
-                                        // keeping it the same as it is a different background task.
-                                        onlinePlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                        _mainThreadActions.Enqueue(() =>
+                                        {
+                                            // TOCTOU check again
+                                            var currentPlayer = TShock.Players[pIndex];
+                                            if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
+                                            {
+                                                currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                            }
+                                        });
                                     }
                                 }
                             });
