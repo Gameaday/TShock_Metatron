@@ -25,6 +25,7 @@ public class GatekeeperService
 
     private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
     private readonly ConcurrentDictionary<string, (int Strikes, DateTime FirstStrike)> _verifyStrikes = new();
+    private readonly ConcurrentDictionary<string, (int Attempts, DateTime FirstAttempt)> _joinRateLimit = new();
     private readonly ConcurrentQueue<Action> _mainThreadActions = new();
     
     private int _tickCounter = 0;
@@ -163,6 +164,24 @@ public class GatekeeperService
         string pName = player.Name;
         string pUuid = player.UUID;
         int pIndex = args.Who;
+        string ip = player.IP;
+
+        var now = DateTime.UtcNow;
+        var rateData = _joinRateLimit.GetOrAdd(ip, (0, now));
+        if ((now - rateData.FirstAttempt).TotalMinutes > 1)
+        {
+            rateData = (0, now);
+            _joinRateLimit[ip] = rateData;
+        }
+
+        var newAttempts = rateData.Attempts + 1;
+        _joinRateLimit[ip] = (newAttempts, rateData.FirstAttempt);
+
+        if (newAttempts > 5)
+        {
+            player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again.");
+            return;
+        }
 
         _ = Task.Run(async () =>
         {
