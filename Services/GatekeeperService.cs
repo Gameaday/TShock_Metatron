@@ -141,12 +141,13 @@ public class GatekeeperService
                 var newStrikes = currentStrikeData.Strikes + 1;
                 _verifyStrikes[ip] = (newStrikes, currentStrikeData.FirstStrike);
 
+                args.Handled = true;
                 if (newStrikes >= 5)
                 {
                     player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
-                    args.Handled = true;
                     return;
                 }
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
             }
         }
     }
@@ -372,6 +373,11 @@ public class GatekeeperService
         while (_mainThreadActions.TryDequeue(out var action))
         {
             action();
+        }
+
+        while (_discord.MainThreadActions.TryDequeue(out var discordAction))
+        {
+            discordAction();
         }
 
         if (++_tickCounter < 60) return;

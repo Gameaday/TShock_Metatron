@@ -30,6 +30,7 @@ public class DiscordService
     private DateTime _lastActiveAudit = DateTime.MinValue;
     public ConcurrentDictionary<string, (ulong DiscordId, DateTime Expiry)> PendingPins { get; } = new();
     private readonly ConcurrentDictionary<ulong, DateTime> _scribeRateLimit = new();
+    public ConcurrentQueue<Action> MainThreadActions { get; } = new();
 
     public DiscordService(CoreConfig config, DatabaseService db)
     {
@@ -115,8 +116,11 @@ public class DiscordService
                         if (_db.Ledger.TryRemove(accountName, out _))
                         {
                             await _db.RemoveSealAsync(record.DiscordId);
-                            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)
-                                ?.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            MainThreadActions.Enqueue(() =>
+                            {
+                                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)
+                                    ?.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            });
                         }
                     }
                 }
@@ -196,7 +200,10 @@ public class DiscordService
         if (record != null && _db.Ledger.TryRemove(record.AccountName.ToLower(), out _))
         {
             _ = _db.RemoveSealAsync(msg.Author.Id);
-            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == record.AccountName.ToLower())?.Disconnect("Your Discord authorization has been revoked via Discord.");
+            MainThreadActions.Enqueue(() =>
+            {
+                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == record.AccountName.ToLower())?.Disconnect("Your Discord authorization has been revoked via Discord.");
+            });
             await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, your Celestial Seal has been severed.");
         }
         else await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you do not have an active seal.");
