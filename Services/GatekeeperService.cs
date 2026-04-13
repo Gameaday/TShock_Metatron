@@ -33,6 +33,13 @@ public class GatekeeperService
     public GatekeeperService(TerrariaPlugin plugin, CoreConfig config, DatabaseService db, DiscordService discord)
     {
         _plugin = plugin; _config = config; _db = db; _discord = discord;
+
+        _discord.KickRequested += (accountName, reason) => {
+            _mainThreadActions.Enqueue(() => {
+                var player = TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName.ToLower());
+                player?.Disconnect(reason);
+            });
+        };
     }
 
     public void EnableHooks()
@@ -87,7 +94,13 @@ public class GatekeeperService
 
                 if (strikeData.Strikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => {
+                        var p = TShock.Players[player.Index];
+                        if (p != null && p.Active && p.UUID == player.UUID)
+                        {
+                            p.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                        }
+                    });
                     args.Handled = true;
                     return;
                 }
@@ -107,7 +120,13 @@ public class GatekeeperService
 
                         if (newStrikes >= 5)
                         {
-                            player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            _mainThreadActions.Enqueue(() => {
+                                var p = TShock.Players[player.Index];
+                                if (p != null && p.Active && p.UUID == player.UUID)
+                                {
+                                    p.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                                }
+                            });
                             args.Handled = true;
                             return;
                         }
@@ -133,7 +152,14 @@ public class GatekeeperService
 
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
-                args.Handled = true; FinalizeLinkage(player, data.DiscordId);
+                args.Handled = true;
+                _mainThreadActions.Enqueue(() => {
+                    var p = TShock.Players[player.Index];
+                    if (p != null && p.Active && p.UUID == player.UUID)
+                    {
+                        FinalizeLinkage(p, data.DiscordId);
+                    }
+                });
             }
             else if (isPinGuess)
             {
@@ -143,10 +169,19 @@ public class GatekeeperService
 
                 if (newStrikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => {
+                        var p = TShock.Players[player.Index];
+                        if (p != null && p.Active && p.UUID == player.UUID)
+                        {
+                            p.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                        }
+                    });
                     args.Handled = true;
                     return;
                 }
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
+                return;
             }
         }
     }
