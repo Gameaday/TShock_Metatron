@@ -85,7 +85,10 @@ public class GatekeeperService
                     _verifyStrikes[ip] = strikeData;
                 }
 
-                if (strikeData.Strikes >= 5)
+                var newStrikes = strikeData.Strikes + 1;
+                _verifyStrikes[ip] = (newStrikes, strikeData.FirstStrike);
+
+                if (newStrikes >= 5)
                 {
                     player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                     args.Handled = true;
@@ -147,6 +150,10 @@ public class GatekeeperService
                     args.Handled = true;
                     return;
                 }
+
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
+                return;
             }
         }
     }
