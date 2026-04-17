@@ -33,6 +33,16 @@ public class GatekeeperService
     public GatekeeperService(TerrariaPlugin plugin, CoreConfig config, DatabaseService db, DiscordService discord)
     {
         _plugin = plugin; _config = config; _db = db; _discord = discord;
+        _discord.KickRequested += OnKickRequested;
+    }
+
+    private void OnKickRequested(string accountName, string reason)
+    {
+        _mainThreadActions.Enqueue(() =>
+        {
+            var player = TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName);
+            player?.Disconnect(reason);
+        });
     }
 
     public void EnableHooks()
