@@ -46,6 +46,8 @@ public class GatekeeperService
         ServerApi.Hooks.ServerLeave.Register(_plugin, OnLeave);
         ServerApi.Hooks.GameUpdate.Register(_plugin, OnPulse);
 
+        _discord.KickRequested += OnKickRequested;
+
         Commands.ChatCommands.Add(new Command("", VerifyCommand, "verify"));
         Commands.ChatCommands.Add(new Command("", UnlinkCommand, "unlink"));
     }
@@ -57,6 +59,17 @@ public class GatekeeperService
         ServerApi.Hooks.NetGreetPlayer.Deregister(_plugin, OnGreet);
         ServerApi.Hooks.ServerLeave.Deregister(_plugin, OnLeave);
         ServerApi.Hooks.GameUpdate.Deregister(_plugin, OnPulse);
+
+        _discord.KickRequested -= OnKickRequested;
+    }
+
+    private void OnKickRequested(string accountName, string reason)
+    {
+        _mainThreadActions.Enqueue(() =>
+        {
+            var player = TShock.Players.FirstOrDefault(p => p?.Account?.Name?.ToLower() == accountName.ToLower());
+            player?.Disconnect(reason);
+        });
     }
 
     private void OnGetData(GetDataEventArgs args)
@@ -147,6 +160,8 @@ public class GatekeeperService
                     args.Handled = true;
                     return;
                 }
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
             }
         }
     }
