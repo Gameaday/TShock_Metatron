@@ -33,6 +33,13 @@ public class GatekeeperService
     public GatekeeperService(TerrariaPlugin plugin, CoreConfig config, DatabaseService db, DiscordService discord)
     {
         _plugin = plugin; _config = config; _db = db; _discord = discord;
+        _discord.KickRequested += (accountName, reason) =>
+        {
+            _mainThreadActions.Enqueue(() =>
+            {
+                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)?.Disconnect(reason);
+            });
+        };
     }
 
     public void EnableHooks()
@@ -147,6 +154,8 @@ public class GatekeeperService
                     args.Handled = true;
                     return;
                 }
+
+                args.Handled = true; // IMPORTANT: Mark handled even if no disconnect yet, to prevent fall-through
             }
         }
     }
