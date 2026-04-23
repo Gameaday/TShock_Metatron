@@ -147,6 +147,10 @@ public class GatekeeperService
                     args.Handled = true;
                     return;
                 }
+
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
+                return;
             }
         }
     }
