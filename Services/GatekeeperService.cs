@@ -87,7 +87,9 @@ public class GatekeeperService
 
                 if (strikeData.Strikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => {
+                        player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    });
                     args.Handled = true;
                     return;
                 }
@@ -107,7 +109,9 @@ public class GatekeeperService
 
                         if (newStrikes >= 5)
                         {
-                            player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            _mainThreadActions.Enqueue(() => {
+                                player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            });
                             args.Handled = true;
                             return;
                         }
@@ -133,7 +137,10 @@ public class GatekeeperService
 
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
-                args.Handled = true; FinalizeLinkage(player, data.DiscordId);
+                args.Handled = true;
+                _mainThreadActions.Enqueue(() => {
+                    FinalizeLinkage(player, data.DiscordId);
+                });
             }
             else if (isPinGuess)
             {
@@ -143,10 +150,14 @@ public class GatekeeperService
 
                 if (newStrikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => {
+                        player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    });
                     args.Handled = true;
                     return;
                 }
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                args.Handled = true;
             }
         }
     }
@@ -179,7 +190,9 @@ public class GatekeeperService
 
         if (newAttempts > 5)
         {
-            player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again.");
+            _mainThreadActions.Enqueue(() => {
+                player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again.");
+            });
             return;
         }
 
