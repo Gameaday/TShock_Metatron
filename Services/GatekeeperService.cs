@@ -40,6 +40,7 @@ public class GatekeeperService
         TShock.Config.Settings.RequireLogin = true;
         TShock.Config.Settings.DisableUUIDLogin = true; // Always disable native UUID login
 
+        _discord.KickRequested += OnKickRequested;
         ServerApi.Hooks.NetGetData.Register(_plugin, OnGetData, 100);
         ServerApi.Hooks.ServerJoin.Register(_plugin, OnJoin, int.MaxValue);
         ServerApi.Hooks.NetGreetPlayer.Register(_plugin, OnGreet);
@@ -52,11 +53,20 @@ public class GatekeeperService
 
     public void DisableHooks()
     {
+        _discord.KickRequested -= OnKickRequested;
         ServerApi.Hooks.NetGetData.Deregister(_plugin, OnGetData);
         ServerApi.Hooks.ServerJoin.Deregister(_plugin, OnJoin);
         ServerApi.Hooks.NetGreetPlayer.Deregister(_plugin, OnGreet);
         ServerApi.Hooks.ServerLeave.Deregister(_plugin, OnLeave);
         ServerApi.Hooks.GameUpdate.Deregister(_plugin, OnPulse);
+    }
+
+    private void OnKickRequested(string accountName, string reason)
+    {
+        _mainThreadActions.Enqueue(() =>
+        {
+            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)?.Disconnect(reason);
+        });
     }
 
     private void OnGetData(GetDataEventArgs args)
@@ -87,7 +97,7 @@ public class GatekeeperService
 
                 if (strikeData.Strikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
                     args.Handled = true;
                     return;
                 }
@@ -107,7 +117,7 @@ public class GatekeeperService
 
                         if (newStrikes >= 5)
                         {
-                            player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
                             args.Handled = true;
                             return;
                         }
@@ -133,7 +143,8 @@ public class GatekeeperService
 
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
-                args.Handled = true; FinalizeLinkage(player, data.DiscordId);
+                args.Handled = true;
+                _mainThreadActions.Enqueue(() => FinalizeLinkage(player, data.DiscordId));
             }
             else if (isPinGuess)
             {
@@ -143,7 +154,7 @@ public class GatekeeperService
 
                 if (newStrikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
                     args.Handled = true;
                     return;
                 }
