@@ -87,7 +87,15 @@ public class GatekeeperService
 
                 if (strikeData.Strikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    int pIndex = player.Index;
+                    string pName = player.Name;
+                    string pUuid = player.UUID;
+                    _mainThreadActions.Enqueue(() =>
+                    {
+                        var cp = TShock.Players[pIndex];
+                        if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                            cp.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    });
                     args.Handled = true;
                     return;
                 }
@@ -105,13 +113,26 @@ public class GatekeeperService
                         var newStrikes = currentStrikeData.Strikes + 1;
                         _verifyStrikes[ip] = (newStrikes, currentStrikeData.FirstStrike);
 
+                        int pIndex = player.Index;
+                        string pName = player.Name;
+                        string pUuid = player.UUID;
                         if (newStrikes >= 5)
                         {
-                            player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            _mainThreadActions.Enqueue(() =>
+                            {
+                                var cp = TShock.Players[pIndex];
+                                if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                                    cp.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                            });
                             args.Handled = true;
                             return;
                         }
-                        player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                        _mainThreadActions.Enqueue(() =>
+                        {
+                            var cp = TShock.Players[pIndex];
+                            if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                                cp.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
+                        });
                     }
                     args.Handled = true;
                     return;
@@ -121,19 +142,44 @@ public class GatekeeperService
                 {
                     if (record.DiscordId != data.DiscordId && !player.IsLoggedIn)
                     {
-                        player.SendErrorMessage("Identity mismatch! This account is pinned to another Discord user. Log in with your recovery password first.");
+                        int pIndex = player.Index;
+                        string pName = player.Name;
+                        string pUuid = player.UUID;
+                        _mainThreadActions.Enqueue(() =>
+                        {
+                            var cp = TShock.Players[pIndex];
+                            if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                                cp.SendErrorMessage("Identity mismatch! This account is pinned to another Discord user. Log in with your recovery password first.");
+                        });
                         args.Handled = true; return;
                     }
                 }
                 else if (TShock.UserAccounts.GetUserAccountByName(player.Name) != null && !player.IsLoggedIn)
                 {
-                    player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
+                    int pIndex = player.Index;
+                    string pName = player.Name;
+                    string pUuid = player.UUID;
+                    _mainThreadActions.Enqueue(() =>
+                    {
+                        var cp = TShock.Players[pIndex];
+                        if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                            cp.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
+                    });
                     args.Handled = true; return;
                 }
 
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
-                args.Handled = true; FinalizeLinkage(player, data.DiscordId);
+                args.Handled = true;
+                int fIndex = player.Index;
+                string fName = player.Name;
+                string fUuid = player.UUID;
+                _mainThreadActions.Enqueue(() =>
+                {
+                    var cp = TShock.Players[fIndex];
+                    if (cp != null && cp.Active && cp.Name == fName && cp.UUID == fUuid)
+                        FinalizeLinkage(cp, data.DiscordId);
+                });
             }
             else if (isPinGuess)
             {
@@ -143,7 +189,15 @@ public class GatekeeperService
 
                 if (newStrikes >= 5)
                 {
-                    player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    int pIndex = player.Index;
+                    string pName = player.Name;
+                    string pUuid = player.UUID;
+                    _mainThreadActions.Enqueue(() =>
+                    {
+                        var cp = TShock.Players[pIndex];
+                        if (cp != null && cp.Active && cp.Name == pName && cp.UUID == pUuid)
+                            cp.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                    });
                     args.Handled = true;
                     return;
                 }
