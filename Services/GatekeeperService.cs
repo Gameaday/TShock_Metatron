@@ -48,10 +48,13 @@ public class GatekeeperService
 
         Commands.ChatCommands.Add(new Command("", VerifyCommand, "verify"));
         Commands.ChatCommands.Add(new Command("", UnlinkCommand, "unlink"));
+
+        _discord.KickRequested += OnKickRequested;
     }
 
     public void DisableHooks()
     {
+        _discord.KickRequested -= OnKickRequested;
         ServerApi.Hooks.NetGetData.Deregister(_plugin, OnGetData);
         ServerApi.Hooks.ServerJoin.Deregister(_plugin, OnJoin);
         ServerApi.Hooks.NetGreetPlayer.Deregister(_plugin, OnGreet);
@@ -389,4 +392,12 @@ public class GatekeeperService
     }
 
     private void OnLeave(LeaveEventArgs args) { _limboPlayers.TryRemove(args.Who, out _); }
+
+    private void OnKickRequested(string accountName, string reason)
+    {
+        _mainThreadActions.Enqueue(() =>
+        {
+            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)?.Disconnect(reason);
+        });
+    }
 }
