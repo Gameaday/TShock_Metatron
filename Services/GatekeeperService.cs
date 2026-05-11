@@ -137,7 +137,7 @@ public class GatekeeperService
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
                 args.Handled = true;
-                _mainThreadActions.Enqueue(() => FinalizeLinkage(player, data.DiscordId));
+                _ = Task.Run(() => FinalizeLinkage(player, data.DiscordId));
             }
             else if (isPinGuess)
             {
@@ -153,6 +153,13 @@ public class GatekeeperService
                 }
                 player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
                 args.Handled = true;
+            }
+            else
+            {
+                if (_limboPlayers.ContainsKey(player.Index))
+                {
+                    args.Handled = true;
+                }
             }
         }
     }
@@ -207,6 +214,13 @@ public class GatekeeperService
 
                 if (uuidMatch)
                 {
+                    // Asynchronous upgrade path for legacy plaintext UUIDs
+                    string? newlyHashedUuid = null;
+                    if (!isHashedUuid)
+                    {
+                        newlyHashedUuid = BC.HashPassword(pUuid);
+                    }
+
                     _mainThreadActions.Enqueue(() =>
                     {
                         var onlinePlayer = TShock.Players[pIndex];
@@ -215,10 +229,9 @@ public class GatekeeperService
                         {
                             _limboPlayers.TryRemove(pIndex, out _);
 
-                            // Asynchronous upgrade path for legacy plaintext UUIDs
-                            if (!isHashedUuid)
+                            if (newlyHashedUuid != null)
                             {
-                                _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, BC.HashPassword(pUuid)));
+                                _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, newlyHashedUuid));
                             }
 
                             if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
@@ -278,7 +291,7 @@ public class GatekeeperService
 
         if (strikeData.Strikes >= 5)
         {
-            args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+            _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
             return;
         }
 
@@ -289,7 +302,7 @@ public class GatekeeperService
 
             if (newStrikes >= 5)
             {
-                args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
@@ -305,7 +318,7 @@ public class GatekeeperService
 
             if (newStrikes >= 5)
             {
-                args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
+                _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
@@ -328,37 +341,50 @@ public class GatekeeperService
 
         _verifyStrikes.TryRemove(ip, out _);
         _discord.PendingPins.TryRemove(args.Parameters[0], out _);
-        FinalizeLinkage(args.Player, data.DiscordId);
+        _ = Task.Run(() => FinalizeLinkage(args.Player, data.DiscordId));
     }
 
     private void FinalizeLinkage(TSPlayer player, ulong discordId)
     {
-        player.GodMode = false; 
-        
-        // FIX: Setting buff time to 0 safely clears it natively through TShock
-        player.SetBuff(163, 0, true); 
-        
         string? newPassword = null;
+        string? newHashedPassword = null;
+        string hashedUuid = BC.HashPassword(player.UUID);
 
-        if (player.Account == null)
+        // We evaluate account logic outside to avoid blocking main thread with BC.HashPassword
+        var account = player.Account ?? TShock.UserAccounts.GetUserAccountByName(player.Name);
+        if (account == null)
         {
-            var account = TShock.UserAccounts.GetUserAccountByName(player.Name);
-            if (account == null)
-            {
-                // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
-                var randomBytes = new byte[5];
-                System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
-                newPassword = Convert.ToHexString(randomBytes).ToLower();
-                account = new UserAccount(player.Name, BC.HashPassword(newPassword), "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
-                TShock.UserAccounts.AddUserAccount(account);
-            }
-            player.Account = account; 
+            // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
+            var randomBytes = new byte[5];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+            newPassword = Convert.ToHexString(randomBytes).ToLower();
+            newHashedPassword = BC.HashPassword(newPassword);
+
+            account = new UserAccount(player.Name, newHashedPassword, "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
         }
 
-        _ = _db.SaveSealAsync(new MetatronRecord(player.Account.Name, discordId, BC.HashPassword(player.UUID)));
-        _limboPlayers.TryRemove(player.Index, out _);
-        player.mute = false; player.Heal();
-        player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+        _mainThreadActions.Enqueue(() =>
+        {
+            player.GodMode = false;
+
+            // FIX: Setting buff time to 0 safely clears it natively through TShock
+            player.SetBuff(163, 0, true);
+
+            if (player.Account == null)
+            {
+                if (TShock.UserAccounts.GetUserAccountByName(player.Name) == null && account != null)
+                {
+                    TShock.UserAccounts.AddUserAccount(account);
+                }
+                player.Account = account;
+            }
+
+            _limboPlayers.TryRemove(player.Index, out _);
+            player.mute = false; player.Heal();
+            player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+        });
+
+        _ = _db.SaveSealAsync(new MetatronRecord(account!.Name, discordId, hashedUuid));
 
         _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, player.Index); NetMessage.SendData(7, player.Index); });
         _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
@@ -370,7 +396,7 @@ public class GatekeeperService
         if (args.Player.Account == null || !_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
         _db.Ledger.TryRemove(record.AccountName.ToLower(), out _);
         _ = _db.RemoveSealAsync(record.DiscordId); 
-        args.Player.Disconnect("Seal severed.");
+        _mainThreadActions.Enqueue(() => args.Player.Disconnect("Seal severed."));
     }
 
     private void OnPulse(EventArgs args)
