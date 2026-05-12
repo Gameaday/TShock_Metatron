@@ -137,7 +137,13 @@ public class GatekeeperService
                 _verifyStrikes.TryRemove(ip, out _);
                 _discord.PendingPins.TryRemove(entered, out _);
                 args.Handled = true;
-                _ = Task.Run(() => FinalizeLinkage(player, data.DiscordId));
+
+                int pIndex = player.Index;
+                string pName = player.Name;
+                string pUuid = player.UUID;
+                var pAccount = player.Account;
+
+                _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
             }
             else if (isPinGuess)
             {
@@ -341,17 +347,23 @@ public class GatekeeperService
 
         _verifyStrikes.TryRemove(ip, out _);
         _discord.PendingPins.TryRemove(args.Parameters[0], out _);
-        _ = Task.Run(() => FinalizeLinkage(args.Player, data.DiscordId));
+
+        int pIndex = args.Player.Index;
+        string pName = args.Player.Name;
+        string pUuid = args.Player.UUID;
+        var pAccount = args.Player.Account;
+
+        _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
     }
 
-    private void FinalizeLinkage(TSPlayer player, ulong discordId)
+    private void FinalizeLinkage(int pIndex, string pName, string pUuid, UserAccount? existingAccount, ulong discordId)
     {
         string? newPassword = null;
         string? newHashedPassword = null;
-        string hashedUuid = BC.HashPassword(player.UUID);
+        string hashedUuid = BC.HashPassword(pUuid);
 
         // We evaluate account logic outside to avoid blocking main thread with BC.HashPassword
-        var account = player.Account ?? TShock.UserAccounts.GetUserAccountByName(player.Name);
+        var account = existingAccount ?? TShock.UserAccounts.GetUserAccountByName(pName);
         if (account == null)
         {
             // 🛡️ SECURITY: Use cryptographically secure RNG for temporary passwords to ensure maximum entropy
@@ -360,35 +372,39 @@ public class GatekeeperService
             newPassword = Convert.ToHexString(randomBytes).ToLower();
             newHashedPassword = BC.HashPassword(newPassword);
 
-            account = new UserAccount(player.Name, newHashedPassword, "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
+            account = new UserAccount(pName, newHashedPassword, "", TShock.Config.Settings.DefaultRegistrationGroupName, DateTime.UtcNow.ToString("s"), DateTime.UtcNow.ToString("s"), "");
         }
 
         _mainThreadActions.Enqueue(() =>
         {
-            player.GodMode = false;
-
-            // FIX: Setting buff time to 0 safely clears it natively through TShock
-            player.SetBuff(163, 0, true);
-
-            if (player.Account == null)
+            var onlinePlayer = TShock.Players[pIndex];
+            if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
             {
-                if (TShock.UserAccounts.GetUserAccountByName(player.Name) == null && account != null)
-                {
-                    TShock.UserAccounts.AddUserAccount(account);
-                }
-                player.Account = account;
-            }
+                onlinePlayer.GodMode = false;
 
-            _limboPlayers.TryRemove(player.Index, out _);
-            player.mute = false; player.Heal();
-            player.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+                // FIX: Setting buff time to 0 safely clears it natively through TShock
+                onlinePlayer.SetBuff(163, 0, true);
+
+                if (onlinePlayer.Account == null)
+                {
+                    if (TShock.UserAccounts.GetUserAccountByName(onlinePlayer.Name) == null && account != null)
+                    {
+                        TShock.UserAccounts.AddUserAccount(account);
+                    }
+                    onlinePlayer.Account = account;
+                }
+
+                _limboPlayers.TryRemove(onlinePlayer.Index, out _);
+                onlinePlayer.mute = false; onlinePlayer.Heal();
+                onlinePlayer.SendMessage(_config.Strings.VerifySuccess, Color.LimeGreen);
+            }
         });
 
         _ = _db.SaveSealAsync(new MetatronRecord(account!.Name, discordId, hashedUuid));
 
-        _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, player.Index); NetMessage.SendData(7, player.Index); });
-        _ = _discord.PostLinkSuccessAsync(discordId, player.Name);
-        if (newPassword != null && _config.ShowTemporaryPasswords) _ = _discord.SendRecoveryPasswordAsync(discordId, player.Name, newPassword);
+        _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, pIndex); NetMessage.SendData(7, pIndex); });
+        _ = _discord.PostLinkSuccessAsync(discordId, pName);
+        if (newPassword != null && _config.ShowTemporaryPasswords) _ = _discord.SendRecoveryPasswordAsync(discordId, pName, newPassword);
     }
 
     private void UnlinkCommand(CommandArgs args)
