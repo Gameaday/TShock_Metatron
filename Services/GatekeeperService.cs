@@ -402,7 +402,19 @@ public class GatekeeperService
 
         _ = _db.SaveSealAsync(new MetatronRecord(account!.Name, discordId, hashedUuid));
 
-        _ = Task.Run(async () => { await Task.Delay(500); NetMessage.SendData(3, pIndex); NetMessage.SendData(7, pIndex); });
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(500);
+            _mainThreadActions.Enqueue(() =>
+            {
+                var onlinePlayer = TShock.Players[pIndex];
+                if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
+                {
+                    NetMessage.SendData(3, pIndex);
+                    NetMessage.SendData(7, pIndex);
+                }
+            });
+        });
         _ = _discord.PostLinkSuccessAsync(discordId, pName);
         if (newPassword != null && _config.ShowTemporaryPasswords) _ = _discord.SendRecoveryPasswordAsync(discordId, pName, newPassword);
     }
