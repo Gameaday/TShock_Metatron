@@ -43,3 +43,7 @@
 **Vulnerability:** TShock player slots recycle when players leave/join. By passing a mutable `TSPlayer` object into `Task.Run()` for authentication, a newly joining player occupying that same index could erroneously be granted the privileges and account state of the originally verifying player.
 **Learning:** `TSPlayer` references represent memory slots, not persistent sessions. Background tasks can wake up after the slot has been reassigned to a new user.
 **Prevention:** Snapshot immutable parameters (`Index`, `Name`, `UUID`, `Account`) on the main thread before starting background tasks. Re-fetch and strictly validate `Name` and `UUID` on the main thread before modifying any game state.
+## 2025-02-27 - [CRITICAL] Prevent Cross-Thread Exception DoS via Main-Thread Enqueue
+**Vulnerability:** TShock network hooks (`OnJoin`, `OnGreet`) run on background threads. Modifying game state like `player.Disconnect()` or `player.GodMode = true` from these threads can trigger a cross-thread exception, crashing the server.
+**Learning:** Any operation touching native TShock APIs must be marshaled back to the main game loop thread.
+**Prevention:** Always wrap state modifications inside `_mainThreadActions.Enqueue(...)` when handling network hooks to prevent crashes.

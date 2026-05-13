@@ -198,7 +198,7 @@ public class GatekeeperService
 
         if (newAttempts > 5)
         {
-            player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again.");
+            _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again."));
             return;
         }
 
@@ -276,8 +276,11 @@ public class GatekeeperService
 
         if (_limboPlayers.ContainsKey(player.Index))
         {
-            player.GodMode = true; player.SetBuff(163, 360000, true); player.mute = true;
-            player.SendMessage(_config.Strings.LimboMessage, Color.White);
+            _mainThreadActions.Enqueue(() =>
+            {
+                player.GodMode = true; player.SetBuff(163, 360000, true); player.mute = true;
+                player.SendMessage(_config.Strings.LimboMessage, Color.White);
+            });
         }
     }
 
@@ -447,11 +450,16 @@ public class GatekeeperService
 
     private void OnLeave(LeaveEventArgs args) { _limboPlayers.TryRemove(args.Who, out _); }
 
-    private void OnKickRequested(string accountName, string reason)
+    public void KickAccount(string accountName, string reason)
     {
         _mainThreadActions.Enqueue(() =>
         {
             TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)?.Disconnect(reason);
         });
+    }
+
+    private void OnKickRequested(string accountName, string reason)
+    {
+        KickAccount(accountName, reason);
     }
 }
