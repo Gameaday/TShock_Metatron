@@ -121,7 +121,7 @@ public class MetatronPlugin : TerrariaPlugin
             if (_database?.Ledger.TryRemove(targetName, out var record) == true) {
                 _ = _database?.RemoveSealAsync(record.DiscordId);
                 args.Player.SendSuccessMessage($"[Metatron] Severed seal for {targetName}.");
-                TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == targetName)?.Disconnect("Your Discord seal was administratively severed.");
+                _gatekeeper?.KickAccount(targetName, "Your Discord seal was administratively severed.");
             }
         }
         else if (cmd == "check") args.Player.SendInfoMessage($"Discord Gate: {(_config.EnableDiscordGate ? "ON" : "OFF")}");
