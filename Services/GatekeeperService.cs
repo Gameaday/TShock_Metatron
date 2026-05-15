@@ -278,10 +278,11 @@ public class GatekeeperService
         {
             int pIndex = player.Index;
             string pName = player.Name;
+            string pUuid = player.UUID;
             _mainThreadActions.Enqueue(() =>
             {
                 var current = TShock.Players[pIndex];
-                if (current != null && current.Active && current.Name == pName)
+                if (current != null && current.Active && current.Name == pName && current.UUID == pUuid)
                 {
                     current.GodMode = true; current.SetBuff(163, 360000, true); current.mute = true;
                     current.SendMessage(_config.Strings.LimboMessage, Color.White);
@@ -452,9 +453,12 @@ public class GatekeeperService
             if (kvp.Value == DateTime.MinValue) continue; 
             if ((now - kvp.Value).TotalMinutes >= _config.VerificationTimeoutMinutes)
             {
-                var p = TShock.Players[kvp.Key];
-                if (p != null) SafeDisconnect(p, "Verification timeout.");
-                _limboPlayers.TryRemove(kvp.Key, out _);
+                if (_limboPlayers.TryUpdate(kvp.Key, DateTime.MinValue, kvp.Value))
+                {
+                    var p = TShock.Players[kvp.Key];
+                    if (p != null && p.Active) p.Disconnect("Verification timeout.");
+                    _limboPlayers.TryRemove(kvp.Key, out _);
+                }
             }
         }
     }
@@ -465,10 +469,11 @@ public class GatekeeperService
     {
         int index = player.Index;
         string name = player.Name;
+        string uuid = player.UUID;
         _mainThreadActions.Enqueue(() =>
         {
             var current = TShock.Players[index];
-            if (current != null && current.Active && current.Name == name) current.Disconnect(reason);
+            if (current != null && current.Active && current.Name == name && current.UUID == uuid) current.Disconnect(reason);
         });
     }
 
