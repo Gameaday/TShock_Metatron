@@ -453,10 +453,14 @@ public class GatekeeperService
             if (kvp.Value == DateTime.MinValue) continue; 
             if ((now - kvp.Value).TotalMinutes >= _config.VerificationTimeoutMinutes)
             {
+                var current = TShock.Players[kvp.Key];
+                if (current == null || !current.Active) continue;
+                string currentUuid = current.UUID;
+
                 if (_limboPlayers.TryUpdate(kvp.Key, DateTime.MinValue, kvp.Value))
                 {
                     var p = TShock.Players[kvp.Key];
-                    if (p != null && p.Active) p.Disconnect("Verification timeout.");
+                    if (p != null && p.Active && p.UUID == currentUuid) p.Disconnect("Verification timeout.");
                     _limboPlayers.TryRemove(kvp.Key, out _);
                 }
             }
