@@ -90,7 +90,7 @@ public class GatekeeperService
 
                 if (strikeData.Strikes >= 5)
                 {
-                    _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+                    SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                     args.Handled = true;
                     return;
                 }
@@ -110,7 +110,7 @@ public class GatekeeperService
 
                         if (newStrikes >= 5)
                         {
-                            _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+                            SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                             args.Handled = true;
                             return;
                         }
@@ -153,7 +153,7 @@ public class GatekeeperService
 
                 if (newStrikes >= 5)
                 {
-                    _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+                    SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                     args.Handled = true;
                     return;
                 }
@@ -198,7 +198,7 @@ public class GatekeeperService
 
         if (newAttempts > 5)
         {
-            _mainThreadActions.Enqueue(() => player.Disconnect("Disconnected: Too many login attempts. Please wait a moment before trying again."));
+            SafeDisconnect(player, "Disconnected: Too many login attempts. Please wait a moment before trying again.");
             return;
         }
 
@@ -276,10 +276,16 @@ public class GatekeeperService
 
         if (_limboPlayers.ContainsKey(player.Index))
         {
+            int pIndex = player.Index;
+            string pName = player.Name;
             _mainThreadActions.Enqueue(() =>
             {
-                player.GodMode = true; player.SetBuff(163, 360000, true); player.mute = true;
-                player.SendMessage(_config.Strings.LimboMessage, Color.White);
+                var current = TShock.Players[pIndex];
+                if (current != null && current.Active && current.Name == pName)
+                {
+                    current.GodMode = true; current.SetBuff(163, 360000, true); current.mute = true;
+                    current.SendMessage(_config.Strings.LimboMessage, Color.White);
+                }
             });
         }
     }
@@ -300,7 +306,7 @@ public class GatekeeperService
 
         if (strikeData.Strikes >= 5)
         {
-            _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+            SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
             return;
         }
 
@@ -311,7 +317,7 @@ public class GatekeeperService
 
             if (newStrikes >= 5)
             {
-                _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+                SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
@@ -327,7 +333,7 @@ public class GatekeeperService
 
             if (newStrikes >= 5)
             {
-                _mainThreadActions.Enqueue(() => args.Player.Disconnect("Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again."));
+                SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikes}");
@@ -427,7 +433,7 @@ public class GatekeeperService
         if (args.Player.Account == null || !_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
         _db.Ledger.TryRemove(record.AccountName.ToLower(), out _);
         _ = _db.RemoveSealAsync(record.DiscordId); 
-        _mainThreadActions.Enqueue(() => args.Player.Disconnect("Seal severed."));
+        SafeDisconnect(args.Player, "Seal severed.");
     }
 
     private void OnPulse(EventArgs args)
@@ -444,11 +450,27 @@ public class GatekeeperService
         foreach (var kvp in _limboPlayers)
         {
             if (kvp.Value == DateTime.MinValue) continue; 
-            if ((now - kvp.Value).TotalMinutes >= _config.VerificationTimeoutMinutes) { TShock.Players[kvp.Key]?.Disconnect("Verification timeout."); _limboPlayers.TryRemove(kvp.Key, out _); }
+            if ((now - kvp.Value).TotalMinutes >= _config.VerificationTimeoutMinutes)
+            {
+                var p = TShock.Players[kvp.Key];
+                if (p != null) SafeDisconnect(p, "Verification timeout.");
+                _limboPlayers.TryRemove(kvp.Key, out _);
+            }
         }
     }
 
     private void OnLeave(LeaveEventArgs args) { _limboPlayers.TryRemove(args.Who, out _); }
+
+    private void SafeDisconnect(TSPlayer player, string reason)
+    {
+        int index = player.Index;
+        string name = player.Name;
+        _mainThreadActions.Enqueue(() =>
+        {
+            var current = TShock.Players[index];
+            if (current != null && current.Active && current.Name == name) current.Disconnect(reason);
+        });
+    }
 
     public void KickAccount(string accountName, string reason)
     {

@@ -47,3 +47,7 @@
 **Vulnerability:** TShock network hooks (`OnJoin`, `OnGreet`) run on background threads. Modifying game state like `player.Disconnect()` or `player.GodMode = true` from these threads can trigger a cross-thread exception, crashing the server.
 **Learning:** Any operation touching native TShock APIs must be marshaled back to the main game loop thread.
 **Prevention:** Always wrap state modifications inside `_mainThreadActions.Enqueue(...)` when handling network hooks to prevent crashes.
+## 2023-10-27 - [CRITICAL] Fix TOCTOU Slot Recycling Vulnerability During Disconnects
+**Vulnerability:** TShock `TSPlayer` references are tied to array indices (slots) which are rapidly recycled when players join and leave. Enqueueing operations like `player.Disconnect()` to the main thread via `_mainThreadActions.Enqueue` without verifying the slot still belongs to the original user creates a Time-of-Check to Time-of-Use (TOCTOU) vulnerability. This can result in innocent players being kicked or receiving unearned privileges (like `GodMode`).
+**Learning:** Never pass raw `TSPlayer` references into delayed execution queues (like the main thread action queue) or background tasks. The reference only points to the *slot*, not the *session*.
+**Prevention:** Always snapshot immutable properties (`Index`, `Name`, `UUID`) at the time of the event. Inside the delayed execution queue, retrieve the `TSPlayer` using the `Index`, and strictly verify that its `Name` (and ideally `UUID`) still match the snapshotted values before applying any state changes.
