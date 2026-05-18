@@ -72,7 +72,7 @@ public class GatekeeperService
 
         if (args.MsgID == PacketTypes.PasswordSend)
         {
-            string entered;
+            string entered = "";
             try
             {
                 using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
