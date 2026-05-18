@@ -72,7 +72,7 @@ public class GatekeeperService
 
         if (args.MsgID == PacketTypes.PasswordSend)
         {
-            string entered;
+            string entered = "";
             try
             {
                 using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
@@ -80,7 +80,7 @@ public class GatekeeperService
             }
             catch (Exception ex)
             {
-                TShock.Log.ConsoleError($"[Metatron] Malformed PasswordSend packet: {ex.Message}");
+                TShock.Log.ConsoleError($"[Metatron] Dropped malformed PasswordSend packet from {player.Name}: {ex.Message}");
                 args.Handled = true;
                 return;
             }
