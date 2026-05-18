@@ -72,8 +72,18 @@ public class GatekeeperService
 
         if (args.MsgID == PacketTypes.PasswordSend)
         {
-            using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
-            string entered = reader.ReadString();
+            string entered;
+            try
+            {
+                using var reader = new BinaryReader(new MemoryStream(args.Msg.readBuffer, args.Index, args.Length));
+                entered = reader.ReadString();
+            }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleError($"[Metatron] Malformed PasswordSend packet: {ex.Message}");
+                args.Handled = true;
+                return;
+            }
 
             bool isPinGuess = entered.Length == 6 && entered.All(char.IsDigit);
             string ip = player.IP;
