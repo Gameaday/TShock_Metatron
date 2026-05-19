@@ -46,7 +46,7 @@ public class GatekeeperService
         ServerApi.Hooks.ServerLeave.Register(_plugin, OnLeave);
         ServerApi.Hooks.GameUpdate.Register(_plugin, OnPulse);
 
-        Commands.ChatCommands.Add(new Command("", VerifyCommand, "verify"));
+        Commands.ChatCommands.Add(new Command("", VerifyCommand, "verify") { DoLog = false });
         Commands.ChatCommands.Add(new Command("", UnlinkCommand, "unlink"));
 
         _discord.KickRequested += OnKickRequested;
