@@ -59,3 +59,8 @@
 **Vulnerability:** The `/verify` command, which takes a sensitive authentication PIN as a parameter, was registered without disabling logging. Because TShock logs all chat commands by default, users' sensitive PINs were exposed in plain text in the server console and log files.
 **Learning:** Any custom command in TShock that accepts sensitive data (like passwords, tokens, or PINs) must explicitly tell the native command handler to suppress logging to prevent credentials from being persisted to disk.
 **Prevention:** Always append `{ DoLog = false }` when registering custom `Command` instances that handle sensitive user input.
+
+## 2026-05-20 - [Authorization Token Reuse (TOCTOU Race Condition)]
+**Vulnerability:** Discord verification PINs were checked using `TryGetValue` and only removed later with `TryRemove`. This allowed two concurrent requests using the same PIN to both succeed at `TryGetValue` before either reached `TryRemove`, leading to a TOCTOU race condition where an attacker could reuse a single-use authorization token to bypass authentication or link multiple accounts to a single Discord identity.
+**Learning:** When dealing with single-use authentication tokens on multithreaded systems, simply checking validity before eventually deleting the token creates race conditions. Concurrency mechanisms are needed to prevent multiple validations from succeeding.
+**Prevention:** Atomically read and consume single-use authorization tokens in one thread-safe operation, such as using `ConcurrentDictionary.TryRemove()` instead of `TryGetValue()`.
