@@ -106,12 +106,10 @@ public class GatekeeperService
                 }
             }
 
-            if (_discord.PendingPins.TryGetValue(entered, out var data))
+            if (_discord.PendingPins.TryRemove(entered, out var data))
             {
                 if (DateTime.UtcNow > data.Expiry)
                 {
-                    _discord.PendingPins.TryRemove(entered, out _);
-
                     if (isPinGuess)
                     {
                         var currentStrikeData = _verifyStrikes.GetOrAdd(ip, (0, now));
@@ -145,7 +143,6 @@ public class GatekeeperService
                 }
 
                 _verifyStrikes.TryRemove(ip, out _);
-                _discord.PendingPins.TryRemove(entered, out _);
                 args.Handled = true;
 
                 int pIndex = player.Index;
@@ -321,7 +318,7 @@ public class GatekeeperService
             return;
         }
 
-        if (args.Parameters.Count == 0 || !_discord.PendingPins.TryGetValue(args.Parameters[0], out var data))
+        if (args.Parameters.Count == 0 || !_discord.PendingPins.TryRemove(args.Parameters[0], out var data))
         {
             var newStrikes = strikeData.Strikes + 1;
             _verifyStrikes[ip] = (newStrikes, strikeData.FirstStrike);
@@ -337,8 +334,6 @@ public class GatekeeperService
 
         if (DateTime.UtcNow > data.Expiry)
         {
-            _discord.PendingPins.TryRemove(args.Parameters[0], out _);
-
             var newStrikes = strikeData.Strikes + 1;
             _verifyStrikes[ip] = (newStrikes, strikeData.FirstStrike);
 
@@ -366,7 +361,6 @@ public class GatekeeperService
         }
 
         _verifyStrikes.TryRemove(ip, out _);
-        _discord.PendingPins.TryRemove(args.Parameters[0], out _);
 
         int pIndex = args.Player.Index;
         string pName = args.Player.Name;
