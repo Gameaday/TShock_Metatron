@@ -161,11 +161,23 @@ public class DiscordService
         if (_discordRest == null) return;
 
         var now = DateTime.UtcNow;
-        var lastUse = _scribeRateLimit.AddOrUpdate(msg.Author.Id, now, (_, old) => (now - old).TotalMinutes < 2 ? old : now);
-        if (lastUse != now && (now - lastUse).TotalMinutes < 2)
+        while (true)
         {
-            await DeleteAndWarnAsync(channel, msg, $"⏳ <@{msg.Author.Id}>, stop requested. Wait a moment.");
-            return;
+            if (_scribeRateLimit.TryGetValue(msg.Author.Id, out var nextAllowed))
+            {
+                if (now < nextAllowed)
+                {
+                    await DeleteAndWarnAsync(channel, msg, $"⏳ <@{msg.Author.Id}>, stop requested. Wait a moment.");
+                    return;
+                }
+
+                if (_scribeRateLimit.TryUpdate(msg.Author.Id, now.AddMinutes(2), nextAllowed))
+                    break;
+            }
+            else if (_scribeRateLimit.TryAdd(msg.Author.Id, now.AddMinutes(2)))
+            {
+                break;
+            }
         }
 
         bool hasRole = await CheckUserRoleAsync(msg.Author.Id);
