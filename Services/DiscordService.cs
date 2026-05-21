@@ -160,7 +160,9 @@ public class DiscordService
     {
         if (_discordRest == null) return;
 
-        if (_scribeRateLimit.TryGetValue(msg.Author.Id, out var lastUse) && (DateTime.UtcNow - lastUse).TotalMinutes < 2)
+        var now = DateTime.UtcNow;
+        var lastUse = _scribeRateLimit.AddOrUpdate(msg.Author.Id, now, (_, old) => (now - old).TotalMinutes < 2 ? old : now);
+        if (lastUse != now && (now - lastUse).TotalMinutes < 2)
         {
             await DeleteAndWarnAsync(channel, msg, $"⏳ <@{msg.Author.Id}>, stop requested. Wait a moment.");
             return;
@@ -182,7 +184,6 @@ public class DiscordService
             {
                 await dm.SendMessageAsync($"📜 **Authorization PIN:** `{pin}`\nExpires in 15 mins. Enter this PIN as your Server Password in Terraria.");
                 PendingPins[pin] = (msg.Author.Id, DateTime.UtcNow.AddMinutes(15));
-                _scribeRateLimit[msg.Author.Id] = DateTime.UtcNow;
 
                 TShock.Log.ConsoleInfo($"[Metatron] Discord User {msg.Author.Username} requested a linking PIN.");
                 await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, check your DMs for your PIN!");
