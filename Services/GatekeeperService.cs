@@ -89,9 +89,12 @@ public class GatekeeperService
             string ip = player.IP;
             var now = DateTime.UtcNow;
 
+            int currentStrikes = 0;
             if (isPinGuess)
             {
-                if (_verifyStrikes.TryGetValue(ip, out var strikeData) && strikeData.Strikes >= 5 && (now - strikeData.FirstStrike).TotalMinutes <= 15)
+                var strikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
+                currentStrikes = strikeData.Strikes;
+                if (currentStrikes > 5)
                 {
                     SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                     args.Handled = true;
@@ -105,14 +108,13 @@ public class GatekeeperService
                 {
                     if (isPinGuess)
                     {
-                        var newStrikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
-                        if (newStrikeData.Strikes >= 5)
+                        if (currentStrikes >= 5)
                         {
                             SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                             args.Handled = true;
                             return;
                         }
-                        player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikeData.Strikes}");
+                        player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
                     }
                     args.Handled = true;
                     return;
@@ -144,14 +146,13 @@ public class GatekeeperService
             }
             else if (isPinGuess)
             {
-                var newStrikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
-                if (newStrikeData.Strikes >= 5)
+                if (currentStrikes >= 5)
                 {
                     SafeDisconnect(player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                     args.Handled = true;
                     return;
                 }
-                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikeData.Strikes}");
+                player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
                 args.Handled = true;
             }
             else
@@ -284,7 +285,10 @@ public class GatekeeperService
         string ip = args.Player.IP;
         var now = DateTime.UtcNow;
 
-        if (_verifyStrikes.TryGetValue(ip, out var strikeData) && strikeData.Strikes >= 5 && (now - strikeData.FirstStrike).TotalMinutes <= 15)
+        var strikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
+        int currentStrikes = strikeData.Strikes;
+
+        if (currentStrikes > 5)
         {
             SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
             return;
@@ -292,25 +296,23 @@ public class GatekeeperService
 
         if (args.Parameters.Count == 0 || !_discord.PendingPins.TryRemove(args.Parameters[0], out var data))
         {
-            var newStrikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
-            if (newStrikeData.Strikes >= 5)
+            if (currentStrikes >= 5)
             {
                 SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                 return;
             }
-            args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikeData.Strikes}");
+            args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
             return;
         }
 
         if (DateTime.UtcNow > data.Expiry)
         {
-            var newStrikeData = _verifyStrikes.AddOrUpdate(ip, (1, now), (_, old) => (now - old.FirstStrike).TotalMinutes > 15 ? (1, now) : (old.Strikes + 1, old.FirstStrike));
-            if (newStrikeData.Strikes >= 5)
+            if (currentStrikes >= 5)
             {
                 SafeDisconnect(args.Player, "Disconnected: Too many invalid PIN attempts. Please wait 15 minutes before trying again.");
                 return;
             }
-            args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - newStrikeData.Strikes}");
+            args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
             return;
         }
 
