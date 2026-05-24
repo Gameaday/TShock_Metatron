@@ -64,3 +64,8 @@
 **Vulnerability:** Discord verification PINs were checked using `TryGetValue` and only removed later with `TryRemove`. This allowed two concurrent requests using the same PIN to both succeed at `TryGetValue` before either reached `TryRemove`, leading to a TOCTOU race condition where an attacker could reuse a single-use authorization token to bypass authentication or link multiple accounts to a single Discord identity.
 **Learning:** When dealing with single-use authentication tokens on multithreaded systems, simply checking validity before eventually deleting the token creates race conditions. Concurrency mechanisms are needed to prevent multiple validations from succeeding.
 **Prevention:** Atomically read and consume single-use authorization tokens in one thread-safe operation, such as using `ConcurrentDictionary.TryRemove()` instead of `TryGetValue()`.
+
+## 2024-05-24 - Rate Limit TOCTOU Bypass via TryGetValue
+**Vulnerability:** The PIN verification rate limiter used `ConcurrentDictionary.TryGetValue()` to check failures before using the PIN, and only incremented on failures. Attackers could send many concurrent requests that all passed the `TryGetValue()` check simultaneously before the first failure could increment the counter, completely bypassing the 5-strike limit.
+**Learning:** Checking a rate limit value without atomically incrementing it creates a TOCTOU race condition in multithreaded environments.
+**Prevention:** When implementing attempt counters with `ConcurrentDictionary`, atomically pre-increment the counter using `AddOrUpdate()` *before* evaluating the threshold or performing the sensitive action.
