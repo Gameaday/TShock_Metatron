@@ -97,8 +97,8 @@ public class DiscordService
                 if (hasPlayers && (now - _lastActiveAudit).TotalMinutes >= 15)
                 {
                     _lastActiveAudit = now;
-                    var activeNames = TShock.Players.Where(p => p?.Account != null).Select(p => p.Account.Name.ToLower());
-                    foreach (var name in activeNames) _auditQueue.Enqueue(name);
+                    var activeNames = TShock.Players.Where(p => p?.Account != null).Select(p => p.Account.Name?.ToLower()).Where(n => n != null);
+                    foreach (var name in activeNames) _auditQueue.Enqueue(name!);
                 }
                 
                 // 4. CHUNKED AUDIT (Zero extra threads, zero blocking)

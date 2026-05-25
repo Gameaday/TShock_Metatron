@@ -405,7 +405,7 @@ public class GatekeeperService
 
     private void UnlinkCommand(CommandArgs args)
     {
-        if (args.Player.Account == null || !_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
+        if (args.Player.Account?.Name == null || !_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
         _db.Ledger.TryRemove(record.AccountName.ToLower(), out _);
         _ = _db.RemoveSealAsync(record.DiscordId); 
         SafeDisconnect(args.Player, "Seal severed.");
@@ -459,7 +459,7 @@ public class GatekeeperService
     {
         _mainThreadActions.Enqueue(() =>
         {
-            TShock.Players.FirstOrDefault(p => p?.Account?.Name.ToLower() == accountName)?.Disconnect(reason);
+            TShock.Players.FirstOrDefault(p => p?.Account?.Name?.ToLower() == accountName)?.Disconnect(reason);
         });
     }
 
