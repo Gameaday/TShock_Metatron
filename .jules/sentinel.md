@@ -64,10 +64,17 @@
 **Vulnerability:** Discord verification PINs were checked using `TryGetValue` and only removed later with `TryRemove`. This allowed two concurrent requests using the same PIN to both succeed at `TryGetValue` before either reached `TryRemove`, leading to a TOCTOU race condition where an attacker could reuse a single-use authorization token to bypass authentication or link multiple accounts to a single Discord identity.
 **Learning:** When dealing with single-use authentication tokens on multithreaded systems, simply checking validity before eventually deleting the token creates race conditions. Concurrency mechanisms are needed to prevent multiple validations from succeeding.
 **Prevention:** Atomically read and consume single-use authorization tokens in one thread-safe operation, such as using `ConcurrentDictionary.TryRemove()` instead of `TryGetValue()`.
+
+## 2024-05-24 - Rate Limit TOCTOU Bypass via TryGetValue
+**Vulnerability:** The PIN verification rate limiter used `ConcurrentDictionary.TryGetValue()` to check failures before using the PIN, and only incremented on failures. Attackers could send many concurrent requests that all passed the `TryGetValue()` check simultaneously before the first failure could increment the counter, completely bypassing the 5-strike limit.
+**Learning:** Checking a rate limit value without atomically incrementing it creates a TOCTOU race condition in multithreaded environments.
+**Prevention:** When implementing attempt counters with `ConcurrentDictionary`, atomically pre-increment the counter using `AddOrUpdate()` *before* evaluating the threshold or performing the sensitive action.
+
 ## 2026-05-20 - [Fix Rate Limit Brute Force (TOCTOU)]
 **Vulnerability:** A Time-Of-Check to Time-Of-Use (TOCTOU) vulnerability existed in `GatekeeperService.cs` where the `_verifyStrikes` counter was checked using `TryGetValue` *before* the atomic `AddOrUpdate` occurred. This allowed concurrent attackers to spam `/verify` or `PasswordSend` packets simultaneously, bypassing the 5-strike limit entirely.
 **Learning:** Checking a counter's current value before incrementing it on multithreaded systems leaves a critical window where multiple concurrent requests will all read the old (valid) value, resulting in bypasses of the brute-force protection logic.
 **Prevention:** Always use `ConcurrentDictionary.AddOrUpdate()` to atomically pre-increment the attempt counter *before* comparing the result against the allowed threshold limit.
+
 ## 2026-05-20 - [CRITICAL] Prevent NullReferenceException DoS on Account.Name
 **Vulnerability:** TShock `TSPlayer.Account` and `Account.Name` properties can be unexpectedly null. Calling methods like `.ToLower()` directly on them without null checks (e.g., `p?.Account?.Name.ToLower()`) throws a `NullReferenceException`. Because many of these accessors occur on the main game thread or inside background packet processors, this unhandled exception crashes the server completely, leading to a Denial of Service (DoS) vulnerability.
 **Learning:** In TShock plugin development, game state properties like accounts and their names are highly mutable and transient, and are frequently null for unauthenticated players or during login transitions.
