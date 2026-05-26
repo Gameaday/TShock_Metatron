@@ -97,7 +97,7 @@ public class DiscordService
                 if (hasPlayers && (now - _lastActiveAudit).TotalMinutes >= 15)
                 {
                     _lastActiveAudit = now;
-                    var activeNames = TShock.Players.Where(p => p?.Account != null).Select(p => p.Account.Name.ToLower());
+                    var activeNames = TShock.Players.Where(p => p?.Account?.Name != null).Select(p => p.Account!.Name.ToLower());
                     foreach (var name in activeNames) _auditQueue.Enqueue(name);
                 }
                 
