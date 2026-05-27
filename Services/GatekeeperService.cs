@@ -405,7 +405,8 @@ public class GatekeeperService
 
     private void UnlinkCommand(CommandArgs args)
     {
-        if (args.Player.Account?.Name == null || !_db.Ledger.TryGetValue(args.Player.Account.Name.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
+        var accountName = args.Player.Account?.Name;
+        if (accountName == null || !_db.Ledger.TryGetValue(accountName.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
         _db.Ledger.TryRemove(record.AccountName.ToLower(), out _);
         _ = _db.RemoveSealAsync(record.DiscordId); 
         SafeDisconnect(args.Player, "Seal severed.");
