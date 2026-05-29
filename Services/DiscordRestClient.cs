@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -60,12 +61,18 @@ public class DiscordRestClient
     }
 
     // --- INTERNAL RATE-LIMITED ENGINE ---
-    internal async Task<JsonElement?> GetJsonAsync(string endpoint) => await SendAsync(HttpMethod.Get, endpoint);
+    internal async Task<JsonElement?> GetJsonAsync(string endpoint, bool throwOnFailure = false, bool returnNullOnNotFound = false)
+        => await SendAsync(HttpMethod.Get, endpoint, null, throwOnFailure, returnNullOnNotFound);
     internal async Task<JsonElement?> PostJsonAsync(string endpoint, object payload) => await SendAsync(HttpMethod.Post, endpoint, payload);
     internal async Task<JsonElement?> PatchJsonAsync(string endpoint, object payload) => await SendAsync(HttpMethod.Patch, endpoint, payload);
     internal async Task DeleteAsync(string endpoint) => await SendAsync(HttpMethod.Delete, endpoint);
 
-    private async Task<JsonElement?> SendAsync(HttpMethod method, string endpoint, object? payload = null)
+    private async Task<JsonElement?> SendAsync(
+        HttpMethod method,
+        string endpoint,
+        object? payload = null,
+        bool throwOnFailure = false,
+        bool returnNullOnNotFound = false)
     {
         await _rateLimitLock.WaitAsync();
         try
@@ -94,11 +101,25 @@ public class DiscordRestClient
                 }
 
                 await Task.Delay(50); // Burst limit protection
-                if (!response.IsSuccessStatusCode || method == HttpMethod.Delete) return null;
+                if (!response.IsSuccessStatusCode || method == HttpMethod.Delete)
+                {
+                    if (returnNullOnNotFound && response.StatusCode == HttpStatusCode.NotFound)
+                        return null;
+
+                    if (throwOnFailure)
+                        throw new HttpRequestException(
+                            $"Discord API request failed for {endpoint} with status {(int)response.StatusCode}.",
+                            null,
+                            response.StatusCode);
+
+                    return null;
+                }
                 
                 using var successDoc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 return successDoc.RootElement.Clone();
             }
+            if (throwOnFailure)
+                throw new HttpRequestException($"Discord API request failed after retries for {endpoint}.");
             return null;
         }
         finally { _rateLimitLock.Release(); }
@@ -207,7 +228,7 @@ public class RestGuild
 
     public async Task<RestGuildUser?> GetUserAsync(ulong userId)
     {
-        var json = await _client.GetJsonAsync($"/guilds/{Id}/members/{userId}");
+        var json = await _client.GetJsonAsync($"/guilds/{Id}/members/{userId}", throwOnFailure: true, returnNullOnNotFound: true);
         if (json == null) return null;
         
         var userElement = json.Value.GetProperty("user");
