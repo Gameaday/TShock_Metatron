@@ -110,8 +110,8 @@ public class DiscordService
 
                 if (_auditQueue.TryDequeue(out string? accountName) && _db.Ledger.TryGetValue(accountName, out var record))
                 {
-                    bool isStillValid = await CheckUserRoleAsync(record.DiscordId);
-                    if (!isStillValid)
+                    bool? isStillValid = await CheckUserRoleAsync(record.DiscordId);
+                    if (isStillValid == false)
                     {
                         TShock.Log.ConsoleInfo($"[Metatron] Audit: Severing seal for {record.AccountName} (No longer valid in Discord).");
                         if (_db.Ledger.TryRemove(accountName, out _))
@@ -180,10 +180,10 @@ public class DiscordService
             }
         }
 
-        bool hasRole = await CheckUserRoleAsync(msg.Author.Id);
-        if (_config.RequiredDiscordRoleId != 0 && !hasRole)
+        bool? hasRole = await CheckUserRoleAsync(msg.Author.Id);
+        if (_config.RequiredDiscordRoleId != 0 && hasRole != true)
         {
-            await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you lack the required role to link.");
+            await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you lack the required role to link (or the API is down).");
             return;
         }
 
@@ -245,13 +245,13 @@ public class DiscordService
         catch { } finally { _statusLock.Release(); }
     }
 
-    public async Task<bool> CheckUserRoleAsync(ulong userId)
+    public async Task<bool?> CheckUserRoleAsync(ulong userId)
     {
         if (_discordRest == null || _config.DiscordGuildId == 0) return true;
         try
         {
             var guild = await _discordRest.GetGuildAsync(_config.DiscordGuildId);
-            if (guild == null) return false;
+            if (guild == null) return null; // API issue, fail open
 
             var user = await guild.GetUserAsync(userId);
             if (user == null) return false; // Left the server
@@ -259,7 +259,7 @@ public class DiscordService
             if (_config.RequiredDiscordRoleId != 0) return user.RoleIds.Contains(_config.RequiredDiscordRoleId); // Has role
             return true; // No role required, but is in server
         }
-        catch { return false; }
+        catch { return null; } // Catch all network exceptions, fail open
     }
 
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
