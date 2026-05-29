@@ -231,8 +231,8 @@ public class GatekeeperService
 
                             // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
                             _ = Task.Run(async () => {
-                                bool valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                                if (!valid)
+                                bool? valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                                if (valid == false)
                                 {
                                     if (_db.Ledger.TryRemove(pName.ToLower(), out _))
                                     {
