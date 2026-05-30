@@ -120,6 +120,12 @@ public class GatekeeperService
                     return;
                 }
 
+                if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
+                {
+                    args.Handled = true;
+                    return;
+                }
+
                 if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
                 {
                     if (record.DiscordId != data.DiscordId && !player.IsLoggedIn)
@@ -313,6 +319,12 @@ public class GatekeeperService
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(args.Player.Name) || string.IsNullOrWhiteSpace(args.Player.UUID))
+        {
+            args.Player.SendErrorMessage("Invalid player state. Please reconnect.");
             return;
         }
 
