@@ -70,6 +70,12 @@ public class GatekeeperService
 
         if (_limboPlayers.ContainsKey(player.Index) && args.MsgID != PacketTypes.PasswordSend && (int)args.MsgID != 82) { args.Handled = true; return; }
 
+        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
+        {
+            if (args.MsgID == PacketTypes.PasswordSend) args.Handled = true;
+            return;
+        }
+
         if (args.MsgID == PacketTypes.PasswordSend)
         {
             string entered = "";
@@ -116,12 +122,6 @@ public class GatekeeperService
                         }
                         player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
                     }
-                    args.Handled = true;
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
-                {
                     args.Handled = true;
                     return;
                 }
@@ -288,6 +288,12 @@ public class GatekeeperService
     {
         if (!_limboPlayers.ContainsKey(args.Player.Index)) { args.Player.SendInfoMessage("Already verified."); return; }
 
+        if (string.IsNullOrWhiteSpace(args.Player.Name) || string.IsNullOrWhiteSpace(args.Player.UUID))
+        {
+            args.Player.SendErrorMessage("Invalid player state. Please reconnect.");
+            return;
+        }
+
         string ip = args.Player.IP;
         var now = DateTime.UtcNow;
 
@@ -319,12 +325,6 @@ public class GatekeeperService
                 return;
             }
             args.Player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(args.Player.Name) || string.IsNullOrWhiteSpace(args.Player.UUID))
-        {
-            args.Player.SendErrorMessage("Invalid player state. Please reconnect.");
             return;
         }
 
