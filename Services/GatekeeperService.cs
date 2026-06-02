@@ -23,7 +23,7 @@ public class GatekeeperService
     private readonly DatabaseService _db;
     private readonly DiscordService _discord;
 
-    private readonly ConcurrentDictionary<int, DateTime> _limboPlayers = new();
+    private readonly ConcurrentDictionary<int, (DateTime JoinTime, string Uuid)> _limboPlayers = new();
     private readonly ConcurrentDictionary<string, (int Strikes, DateTime FirstStrike)> _verifyStrikes = new();
     private readonly ConcurrentDictionary<string, (int Attempts, DateTime FirstAttempt)> _joinRateLimit = new();
     private readonly ConcurrentQueue<Action> _mainThreadActions = new();
@@ -177,7 +177,7 @@ public class GatekeeperService
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
         // Place in limbo immediately
-        _limboPlayers[args.Who] = DateTime.UtcNow;
+        _limboPlayers[args.Who] = (DateTime.UtcNow, player.UUID ?? "");
 
         if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID)) return;
 
@@ -437,17 +437,16 @@ public class GatekeeperService
         var now = DateTime.UtcNow;
         foreach (var kvp in _limboPlayers)
         {
-            if (kvp.Value == DateTime.MinValue) continue; 
-            if ((now - kvp.Value).TotalMinutes >= _config.VerificationTimeoutMinutes)
+            if (kvp.Value.JoinTime == DateTime.MinValue) continue;
+            if ((now - kvp.Value.JoinTime).TotalMinutes >= _config.VerificationTimeoutMinutes)
             {
                 var current = TShock.Players[kvp.Key];
                 if (current == null || !current.Active) continue;
-                string currentUuid = current.UUID;
 
-                if (_limboPlayers.TryUpdate(kvp.Key, DateTime.MinValue, kvp.Value))
+                if (_limboPlayers.TryUpdate(kvp.Key, (DateTime.MinValue, ""), kvp.Value))
                 {
                     var p = TShock.Players[kvp.Key];
-                    if (p != null && p.Active && p.UUID == currentUuid) p.Disconnect("Verification timeout.");
+                    if (p != null && p.Active && p.UUID == kvp.Value.Uuid) p.Disconnect("Verification timeout.");
                     _limboPlayers.TryRemove(kvp.Key, out _);
                 }
             }
