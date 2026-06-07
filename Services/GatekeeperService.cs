@@ -227,6 +227,9 @@ public class GatekeeperService
                         if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
                         {
                             _limboPlayers.TryRemove(pIndex, out _);
+                            onlinePlayer.GodMode = false;
+                            onlinePlayer.mute = false;
+                            onlinePlayer.SetBuff(163, 0, true);
 
                             if (newlyHashedUuid != null)
                             {
