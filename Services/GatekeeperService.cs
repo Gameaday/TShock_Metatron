@@ -422,9 +422,19 @@ public class GatekeeperService
     {
         var accountName = args.Player.Account?.Name;
         if (accountName == null || !_db.Ledger.TryGetValue(accountName.ToLower(), out var record)) { args.Player.SendErrorMessage("Not linked."); return; }
-        _db.Ledger.TryRemove(record.AccountName.ToLower(), out _);
-        _ = _db.RemoveSealAsync(record.DiscordId); 
-        SafeDisconnect(args.Player, "Seal severed.");
+
+        _ = Task.Run(async () =>
+        {
+            var removed = await _db.RemoveSealAsync(record.DiscordId);
+            if (!removed.Contains(record.AccountName.ToLower())) removed.Add(record.AccountName.ToLower());
+
+            if (_db.Ledger.TryRemove(record.AccountName.ToLower(), out _)) { }
+
+            foreach (var acc in removed)
+            {
+                KickAccount(acc, "Seal severed.");
+            }
+        });
     }
 
     private void OnPulse(EventArgs args)

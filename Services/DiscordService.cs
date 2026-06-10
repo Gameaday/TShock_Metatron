@@ -114,10 +114,15 @@ public class DiscordService
                     if (isStillValid == false)
                     {
                         TShock.Log.ConsoleInfo($"[Metatron] Audit: Severing seal for {record.AccountName} (No longer valid in Discord).");
-                        if (_db.Ledger.TryRemove(accountName, out _))
+
+                        var removed = await _db.RemoveSealAsync(record.DiscordId);
+                        if (!removed.Contains(accountName)) removed.Add(accountName);
+
+                        if (_db.Ledger.TryRemove(accountName, out _)) { } // Ensure it's out if it wasn't already caught
+
+                        foreach (var acc in removed)
                         {
-                            await _db.RemoveSealAsync(record.DiscordId);
-                            KickRequested?.Invoke(accountName, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                            KickRequested?.Invoke(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
                         }
                     }
                 }
@@ -207,10 +212,17 @@ public class DiscordService
     private async Task HandleUnlinkAsync(RestMessageChannel channel, RestMessage msg)
     {
         var record = _db.Ledger.Values.FirstOrDefault(r => r.DiscordId == msg.Author.Id);
-        if (record != null && _db.Ledger.TryRemove(record.AccountName.ToLower(), out _))
+        if (record != null)
         {
-            _ = _db.RemoveSealAsync(msg.Author.Id);
-            KickRequested?.Invoke(record.AccountName.ToLower(), "Your Discord authorization has been revoked via Discord.");
+            var removed = await _db.RemoveSealAsync(msg.Author.Id);
+            if (!removed.Contains(record.AccountName.ToLower())) removed.Add(record.AccountName.ToLower());
+
+            if (_db.Ledger.TryRemove(record.AccountName.ToLower(), out _)) { }
+
+            foreach (var acc in removed)
+            {
+                KickRequested?.Invoke(acc, "Your Discord authorization has been revoked via Discord.");
+            }
             await DeleteAndWarnAsync(channel, msg, $"✅ <@{msg.Author.Id}>, your Celestial Seal has been severed.");
         }
         else await DeleteAndWarnAsync(channel, msg, $"❌ <@{msg.Author.Id}>, you do not have an active seal.");

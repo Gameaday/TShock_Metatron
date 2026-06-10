@@ -118,10 +118,23 @@ public class MetatronPlugin : TerrariaPlugin
         else if (cmd == "unlink" && args.Parameters.Count > 1)
         {
             string targetName = string.Join(" ", args.Parameters.Skip(1)).ToLower();
-            if (_database?.Ledger.TryRemove(targetName, out var record) == true) {
-                _ = _database?.RemoveSealAsync(record.DiscordId);
+            if (_database?.Ledger.TryGetValue(targetName, out var record) == true) {
+                _ = Task.Run(async () =>
+                {
+                    if (_database != null)
+                    {
+                        var removed = await _database.RemoveSealAsync(record.DiscordId);
+                        if (!removed.Contains(targetName)) removed.Add(targetName);
+
+                        if (_database.Ledger.TryRemove(targetName, out _)) { }
+
+                        foreach (var acc in removed)
+                        {
+                            _gatekeeper?.KickAccount(acc, "Your Discord seal was administratively severed.");
+                        }
+                    }
+                });
                 args.Player.SendSuccessMessage($"[Metatron] Severed seal for {targetName}.");
-                _gatekeeper?.KickAccount(targetName, "Your Discord seal was administratively severed.");
             }
         }
         else if (cmd == "check") args.Player.SendInfoMessage($"Discord Gate: {(_config.EnableDiscordGate ? "ON" : "OFF")}");
