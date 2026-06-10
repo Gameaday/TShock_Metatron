@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -64,14 +65,19 @@ public class DatabaseService
         finally { _dbLock.Release(); }
     }
 
-    public async Task RemoveSealAsync(ulong discordId)
+    public async Task<List<string>> RemoveSealAsync(ulong discordId)
     {
+        var removedAccounts = new List<string>();
+
         // Remove from in-memory ledger first
         foreach (var kvp in Ledger)
         {
             if (kvp.Value.DiscordId == discordId)
             {
-                Ledger.TryRemove(kvp.Key, out _);
+                if (Ledger.TryRemove(kvp.Key, out _))
+                {
+                    removedAccounts.Add(kvp.Key);
+                }
             }
         }
 
@@ -87,5 +93,7 @@ public class DatabaseService
             await cmd.ExecuteNonQueryAsync();
         } catch { }
         finally { _dbLock.Release(); }
+
+        return removedAccounts;
     }
 }
