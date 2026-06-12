@@ -245,7 +245,8 @@ public class GatekeeperService
                                 {
                                     if (_db.Ledger.TryRemove(pName.ToLower(), out _))
                                     {
-                                        await _db.RemoveSealAsync(record.DiscordId);
+                                        var removed = await _db.RemoveSealAsync(record.DiscordId);
+
                                         _mainThreadActions.Enqueue(() =>
                                         {
                                             // TOCTOU check again
@@ -255,6 +256,14 @@ public class GatekeeperService
                                                 currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
                                             }
                                         });
+
+                                        foreach (var acc in removed)
+                                        {
+                                            if (acc != pName.ToLower())
+                                            {
+                                                KickAccount(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                            }
+                                        }
                                     }
                                 }
                             });
