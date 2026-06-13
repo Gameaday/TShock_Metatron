@@ -72,7 +72,13 @@ public class GatekeeperService
 
         if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
         {
-            if (args.MsgID == PacketTypes.PasswordSend) args.Handled = true;
+            if (args.MsgID != PacketTypes.ConnectRequest &&
+                args.MsgID != PacketTypes.PlayerInfo &&
+                args.MsgID != PacketTypes.ClientUUID &&
+                (int)args.MsgID != 82)
+            {
+                args.Handled = true;
+            }
             return;
         }
 
