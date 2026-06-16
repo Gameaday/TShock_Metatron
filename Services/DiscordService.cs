@@ -277,7 +277,7 @@ public class DiscordService
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
         if (_cachedLinkChannel == null) return;
-        try { await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName)); } catch { }
+        try { await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName), new { parse = new[] { "users" } }); } catch { }
     }
 
     public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
