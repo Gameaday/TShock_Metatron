@@ -136,7 +136,7 @@ public class RestMessageChannel
 
     public async Task<RestMessage?> SendMessageAsync(string text)
     {
-        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", new { content = text });
+        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", new { content = text, allowed_mentions = new { parse = new[] { "users" } } });
         return json != null ? new RestMessage(_client, json.Value) : null;
     }
 
