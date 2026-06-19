@@ -136,7 +136,7 @@ public class RestMessageChannel
 
     public async Task<RestMessage?> SendMessageAsync(string text)
     {
-        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", new { content = text });
+        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", new { content = text, allowed_mentions = new { parse = new[] { "users" } } });
         return json != null ? new RestMessage(_client, json.Value) : null;
     }
 
@@ -190,7 +190,7 @@ public class RestMessage
 
     public async Task DeleteAsync() => await _client.DeleteAsync($"/channels/{ChannelId}/messages/{Id}");
     
-    public async Task ModifyAsync(string newContent) => await _client.PatchJsonAsync($"/channels/{ChannelId}/messages/{Id}", new { content = newContent });
+    public async Task ModifyAsync(string newContent) => await _client.PatchJsonAsync($"/channels/{ChannelId}/messages/{Id}", new { content = newContent, allowed_mentions = new { parse = new[] { "users" } } });
 
     public async Task PinAsync() => await _client.Http.PutAsync($"{_client.ApiBase}/channels/{ChannelId}/pins/{Id}", null);
 }

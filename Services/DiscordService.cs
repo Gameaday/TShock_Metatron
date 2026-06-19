@@ -252,7 +252,7 @@ public class DiscordService
                 if (existing != null) { _statusMessageId = existing.Id; await existing.ModifyAsync(statusText); }
                 else { var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText); if (newMsg != null) { _statusMessageId = newMsg.Id; await newMsg.PinAsync(); } }
             }
-            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
+            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText, allowed_mentions = new { parse = new[] { "users" } } });
         }
         catch { } finally { _statusLock.Release(); }
     }
