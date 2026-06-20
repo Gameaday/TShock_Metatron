@@ -75,6 +75,7 @@ public class GatekeeperService
             if (args.MsgID != PacketTypes.ConnectRequest &&
                 args.MsgID != PacketTypes.PlayerInfo &&
                 args.MsgID != PacketTypes.ClientUUID &&
+                args.MsgID != PacketTypes.PasswordSend &&
                 (int)args.MsgID != 82)
             {
                 args.Handled = true;
@@ -169,10 +170,8 @@ public class GatekeeperService
             }
             else
             {
-                if (_limboPlayers.ContainsKey(player.Index))
-                {
-                    args.Handled = true;
-                }
+                // Allow non-PIN PasswordSend packets to fall through to native TShock login handling
+                // This prevents a deadlock where existing users cannot link their Discord because they are blocked from logging in.
             }
         }
     }
