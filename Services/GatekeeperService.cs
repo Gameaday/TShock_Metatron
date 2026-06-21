@@ -75,6 +75,7 @@ public class GatekeeperService
             if (args.MsgID != PacketTypes.ConnectRequest &&
                 args.MsgID != PacketTypes.PlayerInfo &&
                 args.MsgID != PacketTypes.ClientUUID &&
+                args.MsgID != PacketTypes.PasswordSend &&
                 (int)args.MsgID != 82)
             {
                 args.Handled = true;
@@ -167,13 +168,8 @@ public class GatekeeperService
                 player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
                 args.Handled = true;
             }
-            else
-            {
-                if (_limboPlayers.ContainsKey(player.Index))
-                {
-                    args.Handled = true;
-                }
-            }
+            // Fix: Do not set args.Handled = true for non-PIN guesses.
+            // If it is a legitimate password, it needs to fall through to TShock's native handling.
         }
     }
 
