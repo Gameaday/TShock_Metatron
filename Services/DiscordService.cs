@@ -277,7 +277,11 @@ public class DiscordService
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
         if (_cachedLinkChannel == null) return;
-        try { await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName)); } catch { }
+        try {
+            // 🛡️ SECURITY: Prevent ping injection from malicious player names (e.g. @everyone)
+            var allowedMentions = new { parse = new[] { "users" } };
+            await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName), allowedMentions);
+        } catch { }
     }
 
     public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
