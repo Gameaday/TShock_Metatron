@@ -134,9 +134,13 @@ public class RestMessageChannel
 
     internal RestMessageChannel(DiscordRestClient client, ulong id) { _client = client; Id = id; }
 
-    public async Task<RestMessage?> SendMessageAsync(string text)
+    public async Task<RestMessage?> SendMessageAsync(string text, object? allowedMentions = null)
     {
-        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", new { content = text, allowed_mentions = new { parse = new[] { "users" } } });
+        object payload = allowedMentions != null
+            ? new { content = text, allowed_mentions = allowedMentions }
+            : new { content = text };
+
+        var json = await _client.PostJsonAsync($"/channels/{Id}/messages", payload);
         return json != null ? new RestMessage(_client, json.Value) : null;
     }
 
