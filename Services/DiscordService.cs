@@ -252,7 +252,7 @@ public class DiscordService
                 if (existing != null) { _statusMessageId = existing.Id; await existing.ModifyAsync(statusText); }
                 else { var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText); if (newMsg != null) { _statusMessageId = newMsg.Id; await newMsg.PinAsync(); } }
             }
-            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText });
+            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText, allowed_mentions = new { parse = new[] { "users" } } });
         }
         catch { } finally { _statusLock.Release(); }
     }
@@ -277,7 +277,11 @@ public class DiscordService
     public async Task PostLinkSuccessAsync(ulong discordId, string characterName)
     {
         if (_cachedLinkChannel == null) return;
-        try { await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName)); } catch { }
+        try {
+            // 🛡️ SECURITY: Prevent ping injection from malicious player names (e.g. @everyone)
+            var allowedMentions = new { parse = new[] { "users" } };
+            await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName), allowedMentions);
+        } catch { }
     }
 
     public async Task SendRecoveryPasswordAsync(ulong discordId, string characterName, string password)
