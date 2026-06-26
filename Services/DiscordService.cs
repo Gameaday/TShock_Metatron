@@ -279,7 +279,7 @@ public class DiscordService
         if (_cachedLinkChannel == null) return;
         try {
             // 🛡️ SECURITY: Prevent ping injection from malicious player names (e.g. @everyone)
-            var allowedMentions = new { parse = new[] { "users" } };
+            var allowedMentions = new { users = new[] { discordId.ToString() } };
             await _cachedLinkChannel.SendMessageAsync(string.Format(_config.Strings.DiscordBroadcast, discordId, characterName), allowedMentions);
         } catch { }
     }
