@@ -230,7 +230,7 @@ public class DiscordService
 
     private async Task DeleteAndWarnAsync(RestMessageChannel channel, RestMessage triggerMsg, string warning)
     {
-        var warnMsg = await channel.SendMessageAsync(warning);
+        var warnMsg = await channel.SendMessageAsync(warning, new { users = new[] { triggerMsg.Author.Id.ToString() } });
         try { await triggerMsg.DeleteAsync(); } catch { }
         if (warnMsg != null) _ = Task.Delay(5000).ContinueWith(async _ => { try { await warnMsg.DeleteAsync(); } catch { } });
     }
@@ -252,7 +252,7 @@ public class DiscordService
                 if (existing != null) { _statusMessageId = existing.Id; await existing.ModifyAsync(statusText); }
                 else { var newMsg = await _cachedLinkChannel.SendMessageAsync(statusText); if (newMsg != null) { _statusMessageId = newMsg.Id; await newMsg.PinAsync(); } }
             }
-            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText, allowed_mentions = new { parse = new[] { "users" } } });
+            else await _discordRest.PatchJsonAsync($"/channels/{_config.LinkChannelId}/messages/{_statusMessageId}", new { content = statusText, allowed_mentions = new { parse = Array.Empty<string>() } });
         }
         catch { } finally { _statusLock.Release(); }
     }
