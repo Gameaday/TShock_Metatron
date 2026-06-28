@@ -495,7 +495,11 @@ public class GatekeeperService
     {
         _mainThreadActions.Enqueue(() =>
         {
-            TShock.Players.FirstOrDefault(p => p?.Account?.Name?.ToLower() == accountName)?.Disconnect(reason);
+            var sessions = TShock.Players.Where(p => p?.Account?.Name?.ToLower() == accountName).ToList();
+            foreach (var session in sessions)
+            {
+                session?.Disconnect(reason);
+            }
         });
     }
 
