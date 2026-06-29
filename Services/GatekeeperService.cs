@@ -98,7 +98,10 @@ public class GatekeeperService
                 return;
             }
 
-            bool isPinGuess = entered.Length == 6 && entered.All(char.IsDigit);
+            // Distinguish valid 6-digit server passwords from custom PIN guesses
+            // to prevent Denial of Service for legitimate users.
+            bool isServerPassword = entered == TShock.Config.Settings.ServerPassword;
+            bool isPinGuess = !isServerPassword && entered.Length == 6 && entered.All(char.IsDigit);
             string ip = player.IP;
             var now = DateTime.UtcNow;
 
