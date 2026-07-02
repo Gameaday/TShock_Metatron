@@ -284,12 +284,13 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active) return;
 
-        if (_limboPlayers.ContainsKey(player.Index))
+        int pIndex = player.Index;
+        string pName = player.Name;
+        string pUuid = player.UUID;
+
+        _mainThreadActions.Enqueue(() =>
         {
-            int pIndex = player.Index;
-            string pName = player.Name;
-            string pUuid = player.UUID;
-            _mainThreadActions.Enqueue(() =>
+            if (_limboPlayers.ContainsKey(pIndex))
             {
                 var current = TShock.Players[pIndex];
                 if (current != null && current.Active && current.Name == pName && current.UUID == pUuid)
@@ -297,8 +298,8 @@ public class GatekeeperService
                     current.GodMode = true; current.SetBuff(163, 360000, true); current.mute = true;
                     current.SendMessage(_config.Strings.LimboMessage, Color.White);
                 }
-            });
-        }
+            }
+        });
     }
 
     private void VerifyCommand(CommandArgs args)
