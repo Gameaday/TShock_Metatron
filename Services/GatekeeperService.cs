@@ -68,7 +68,16 @@ public class GatekeeperService
         var player = TShock.Players[args.Msg.whoAmI];
         if (player == null) return;
 
-        if (_limboPlayers.ContainsKey(player.Index) && args.MsgID != PacketTypes.PasswordSend && (int)args.MsgID != 82) { args.Handled = true; return; }
+        if (_limboPlayers.ContainsKey(player.Index) &&
+            args.MsgID != PacketTypes.PasswordSend &&
+            args.MsgID != PacketTypes.ConnectRequest &&
+            args.MsgID != PacketTypes.PlayerInfo &&
+            args.MsgID != PacketTypes.ClientUUID &&
+            (int)args.MsgID != 82)
+        {
+            args.Handled = true;
+            return;
+        }
 
         if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
         {
