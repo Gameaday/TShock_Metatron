@@ -211,13 +211,16 @@ public class DiscordService
 
     private async Task HandleUnlinkAsync(RestMessageChannel channel, RestMessage msg)
     {
-        var record = _db.Ledger.Values.FirstOrDefault(r => r.DiscordId == msg.Author.Id);
-        if (record != null)
+        var records = _db.Ledger.Values.Where(r => r.DiscordId == msg.Author.Id).ToList();
+        if (records.Count > 0)
         {
             var removed = await _db.RemoveSealAsync(msg.Author.Id);
-            if (!removed.Contains(record.AccountName.ToLower())) removed.Add(record.AccountName.ToLower());
 
-            if (_db.Ledger.TryRemove(record.AccountName.ToLower(), out _)) { }
+            foreach (var record in records)
+            {
+                if (!removed.Contains(record.AccountName.ToLower())) removed.Add(record.AccountName.ToLower());
+                if (_db.Ledger.TryRemove(record.AccountName.ToLower(), out _)) { }
+            }
 
             foreach (var acc in removed)
             {
