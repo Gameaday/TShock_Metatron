@@ -234,51 +234,51 @@ public class GatekeeperService
                         newlyHashedUuid = BC.HashPassword(pUuid);
                     }
 
-                    _mainThreadActions.Enqueue(() =>
-                    {
-                        var onlinePlayer = TShock.Players[pIndex];
-                        // TOCTOU check: Ensure player slot hasn't been recycled
-                        if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
+                    _ = Task.Run(async () => {
+                        bool? valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                        if (valid == false)
                         {
-                            _limboPlayers.TryRemove(pIndex, out _);
-                            onlinePlayer.GodMode = false;
-                            onlinePlayer.mute = false;
-                            onlinePlayer.SetBuff(163, 0, true);
-
-                            if (newlyHashedUuid != null)
+                            if (_db.Ledger.TryRemove(pName.ToLower(), out _))
                             {
-                                _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, newlyHashedUuid));
-                            }
+                                var removed = await _db.RemoveSealAsync(record.DiscordId);
 
-                            if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
-
-                            // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
-                            _ = Task.Run(async () => {
-                                bool? valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                                if (valid == false)
+                                _mainThreadActions.Enqueue(() =>
                                 {
-                                    if (_db.Ledger.TryRemove(pName.ToLower(), out _))
+                                    var currentPlayer = TShock.Players[pIndex];
+                                    if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
                                     {
-                                        var removed = await _db.RemoveSealAsync(record.DiscordId);
-
-                                        _mainThreadActions.Enqueue(() =>
-                                        {
-                                            // TOCTOU check again
-                                            var currentPlayer = TShock.Players[pIndex];
-                                            if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
-                                            {
-                                                currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
-                                            }
-                                        });
-
-                                        foreach (var acc in removed)
-                                        {
-                                            if (acc != pName.ToLower())
-                                            {
-                                                KickAccount(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
-                                            }
-                                        }
+                                        currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
                                     }
+                                });
+
+                                foreach (var acc in removed)
+                                {
+                                    if (acc != pName.ToLower())
+                                    {
+                                        KickAccount(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            _mainThreadActions.Enqueue(() =>
+                            {
+                                var onlinePlayer = TShock.Players[pIndex];
+                                // TOCTOU check: Ensure player slot hasn't been recycled
+                                if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
+                                {
+                                    _limboPlayers.TryRemove(pIndex, out _);
+                                    onlinePlayer.GodMode = false;
+                                    onlinePlayer.mute = false;
+                                    onlinePlayer.SetBuff(163, 0, true);
+
+                                    if (newlyHashedUuid != null)
+                                    {
+                                        _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, newlyHashedUuid));
+                                    }
+
+                                    if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
                                 }
                             });
                         }
