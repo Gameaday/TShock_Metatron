@@ -79,7 +79,10 @@ public class GatekeeperService
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
+        string? pName = player.Name;
+        string? pUuid = player.UUID;
+
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid))
         {
             if (args.MsgID != PacketTypes.ConnectRequest &&
                 args.MsgID != PacketTypes.PlayerInfo &&
@@ -102,7 +105,7 @@ public class GatekeeperService
             }
             catch (Exception ex)
             {
-                TShock.Log.ConsoleError($"[Metatron] Dropped malformed PasswordSend packet from {player.Name}: {ex.Message}");
+                TShock.Log.ConsoleError($"[Metatron] Dropped malformed PasswordSend packet from {pName}: {ex.Message}");
                 args.Handled = true;
                 return;
             }
@@ -145,7 +148,7 @@ public class GatekeeperService
                     return;
                 }
 
-                if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
+                if (_db.Ledger.TryGetValue(pName.ToLower(), out var record))
                 {
                     if (record.DiscordId != data.DiscordId && !player.IsLoggedIn)
                     {
@@ -153,7 +156,7 @@ public class GatekeeperService
                         args.Handled = true; return;
                     }
                 }
-                else if (TShock.UserAccounts.GetUserAccountByName(player.Name) != null && !player.IsLoggedIn)
+                else if (TShock.UserAccounts.GetUserAccountByName(pName) != null && !player.IsLoggedIn)
                 {
                     player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
                     args.Handled = true; return;
@@ -163,8 +166,6 @@ public class GatekeeperService
                 args.Handled = true;
 
                 int pIndex = player.Index;
-                string pName = player.Name;
-                string pUuid = player.UUID;
                 var pAccount = player.Account;
 
                 _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
@@ -193,10 +194,11 @@ public class GatekeeperService
         // Place in limbo immediately
         _limboPlayers[args.Who] = (DateTime.UtcNow, player.UUID ?? "");
 
-        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID)) return;
+        string? pName = player.Name;
+        string? pUuid = player.UUID;
 
-        string pName = player.Name;
-        string pUuid = player.UUID;
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid)) return;
+
         int pIndex = args.Who;
         string ip = player.IP;
 
@@ -315,7 +317,10 @@ public class GatekeeperService
     {
         if (!_limboPlayers.ContainsKey(args.Player.Index)) { args.Player.SendInfoMessage("Already verified."); return; }
 
-        if (string.IsNullOrWhiteSpace(args.Player.Name) || string.IsNullOrWhiteSpace(args.Player.UUID))
+        string? pName = args.Player.Name;
+        string? pUuid = args.Player.UUID;
+
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid))
         {
             args.Player.SendErrorMessage("Invalid player state. Please reconnect.");
             return;
@@ -355,7 +360,7 @@ public class GatekeeperService
             return;
         }
 
-        if (_db.Ledger.TryGetValue(args.Player.Name.ToLower(), out var record))
+        if (_db.Ledger.TryGetValue(pName.ToLower(), out var record))
         {
             if (record.DiscordId != data.DiscordId && !args.Player.IsLoggedIn)
             {
@@ -363,7 +368,7 @@ public class GatekeeperService
                 return;
             }
         }
-        else if (TShock.UserAccounts.GetUserAccountByName(args.Player.Name) != null && !args.Player.IsLoggedIn)
+        else if (TShock.UserAccounts.GetUserAccountByName(pName) != null && !args.Player.IsLoggedIn)
         {
             args.Player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
             return;
@@ -372,8 +377,6 @@ public class GatekeeperService
         _verifyStrikes.TryRemove(ip, out _);
 
         int pIndex = args.Player.Index;
-        string pName = args.Player.Name;
-        string pUuid = args.Player.UUID;
         var pAccount = args.Player.Account;
 
         _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
