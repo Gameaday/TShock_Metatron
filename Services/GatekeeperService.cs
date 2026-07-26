@@ -68,6 +68,9 @@ public class GatekeeperService
         var player = TShock.Players[args.Msg.whoAmI];
         if (player == null) return;
 
+        string? pName = player.Name;
+        string? pUuid = player.UUID;
+
         if (_limboPlayers.ContainsKey(player.Index) &&
             args.MsgID != PacketTypes.PasswordSend &&
             args.MsgID != PacketTypes.ConnectRequest &&
@@ -78,9 +81,6 @@ public class GatekeeperService
             args.Handled = true;
             return;
         }
-
-        string? pName = player.Name;
-        string? pUuid = player.UUID;
 
         if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid))
         {
@@ -191,11 +191,11 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
-        // Place in limbo immediately
-        _limboPlayers[args.Who] = (DateTime.UtcNow, player.UUID ?? "");
-
         string? pName = player.Name;
         string? pUuid = player.UUID;
+
+        // Place in limbo immediately
+        _limboPlayers[args.Who] = (DateTime.UtcNow, pUuid ?? "");
 
         if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid)) return;
 
