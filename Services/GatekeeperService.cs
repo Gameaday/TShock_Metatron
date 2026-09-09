@@ -68,9 +68,21 @@ public class GatekeeperService
         var player = TShock.Players[args.Msg.whoAmI];
         if (player == null) return;
 
-        if (_limboPlayers.ContainsKey(player.Index) && args.MsgID != PacketTypes.PasswordSend && (int)args.MsgID != 82) { args.Handled = true; return; }
+        string? pName = player.Name;
+        string? pUuid = player.UUID;
 
-        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID))
+        if (_limboPlayers.ContainsKey(player.Index) &&
+            args.MsgID != PacketTypes.PasswordSend &&
+            args.MsgID != PacketTypes.ConnectRequest &&
+            args.MsgID != PacketTypes.PlayerInfo &&
+            args.MsgID != PacketTypes.ClientUUID &&
+            (int)args.MsgID != 82)
+        {
+            args.Handled = true;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid))
         {
             if (args.MsgID != PacketTypes.ConnectRequest &&
                 args.MsgID != PacketTypes.PlayerInfo &&
@@ -93,12 +105,15 @@ public class GatekeeperService
             }
             catch (Exception ex)
             {
-                TShock.Log.ConsoleError($"[Metatron] Dropped malformed PasswordSend packet from {player.Name}: {ex.Message}");
+                TShock.Log.ConsoleError($"[Metatron] Dropped malformed PasswordSend packet from {pName}: {ex.Message}");
                 args.Handled = true;
                 return;
             }
 
-            bool isPinGuess = entered.Length == 6 && entered.All(char.IsDigit);
+            // Distinguish valid 6-digit server passwords from custom PIN guesses
+            // to prevent Denial of Service for legitimate users.
+            bool isServerPassword = entered == TShock.Config.Settings.ServerPassword;
+            bool isPinGuess = !isServerPassword && entered.Length == 6 && entered.All(char.IsDigit);
             string ip = player.IP;
             var now = DateTime.UtcNow;
 
@@ -133,7 +148,7 @@ public class GatekeeperService
                     return;
                 }
 
-                if (_db.Ledger.TryGetValue(player.Name.ToLower(), out var record))
+                if (_db.Ledger.TryGetValue(pName.ToLower(), out var record))
                 {
                     if (record.DiscordId != data.DiscordId && !player.IsLoggedIn)
                     {
@@ -141,7 +156,7 @@ public class GatekeeperService
                         args.Handled = true; return;
                     }
                 }
-                else if (TShock.UserAccounts.GetUserAccountByName(player.Name) != null && !player.IsLoggedIn)
+                else if (TShock.UserAccounts.GetUserAccountByName(pName) != null && !player.IsLoggedIn)
                 {
                     player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
                     args.Handled = true; return;
@@ -151,8 +166,6 @@ public class GatekeeperService
                 args.Handled = true;
 
                 int pIndex = player.Index;
-                string pName = player.Name;
-                string pUuid = player.UUID;
                 var pAccount = player.Account;
 
                 _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
@@ -173,6 +186,8 @@ public class GatekeeperService
                 // Allow non-PIN PasswordSend packets to fall through to native TShock login handling
                 // This prevents a deadlock where existing users cannot link their Discord because they are blocked from logging in.
             }
+            // Fix: Do not set args.Handled = true for non-PIN guesses.
+            // If it is a legitimate password, it needs to fall through to TShock's native handling.
         }
     }
 
@@ -181,13 +196,14 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active || player.Name == TSServerPlayer.AccountName) return;
 
+        string? pName = player.Name;
+        string? pUuid = player.UUID;
+
         // Place in limbo immediately
-        _limboPlayers[args.Who] = (DateTime.UtcNow, player.UUID ?? "");
+        _limboPlayers[args.Who] = (DateTime.UtcNow, pUuid ?? "");
 
-        if (string.IsNullOrWhiteSpace(player.Name) || string.IsNullOrWhiteSpace(player.UUID)) return;
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid)) return;
 
-        string pName = player.Name;
-        string pUuid = player.UUID;
         int pIndex = args.Who;
         string ip = player.IP;
 
@@ -225,51 +241,51 @@ public class GatekeeperService
                         newlyHashedUuid = BC.HashPassword(pUuid);
                     }
 
-                    _mainThreadActions.Enqueue(() =>
-                    {
-                        var onlinePlayer = TShock.Players[pIndex];
-                        // TOCTOU check: Ensure player slot hasn't been recycled
-                        if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
+                    _ = Task.Run(async () => {
+                        bool? valid = await _discord.CheckUserRoleAsync(record.DiscordId);
+                        if (valid == false)
                         {
-                            _limboPlayers.TryRemove(pIndex, out _);
-                            onlinePlayer.GodMode = false;
-                            onlinePlayer.mute = false;
-                            onlinePlayer.SetBuff(163, 0, true);
-
-                            if (newlyHashedUuid != null)
+                            if (_db.Ledger.TryRemove(pName.ToLower(), out _))
                             {
-                                _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, newlyHashedUuid));
-                            }
+                                var removed = await _db.RemoveSealAsync(record.DiscordId);
 
-                            if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
-
-                            // FIRE-AND-FORGET AUDIT: Ensures no lag on join, but boots them quickly if invalid.
-                            _ = Task.Run(async () => {
-                                bool? valid = await _discord.CheckUserRoleAsync(record.DiscordId);
-                                if (valid == false)
+                                _mainThreadActions.Enqueue(() =>
                                 {
-                                    if (_db.Ledger.TryRemove(pName.ToLower(), out _))
+                                    var currentPlayer = TShock.Players[pIndex];
+                                    if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
                                     {
-                                        var removed = await _db.RemoveSealAsync(record.DiscordId);
-
-                                        _mainThreadActions.Enqueue(() =>
-                                        {
-                                            // TOCTOU check again
-                                            var currentPlayer = TShock.Players[pIndex];
-                                            if (currentPlayer != null && currentPlayer.Active && currentPlayer.Name == pName && currentPlayer.UUID == pUuid)
-                                            {
-                                                currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
-                                            }
-                                        });
-
-                                        foreach (var acc in removed)
-                                        {
-                                            if (acc != pName.ToLower())
-                                            {
-                                                KickAccount(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
-                                            }
-                                        }
+                                        currentPlayer.Disconnect("✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
                                     }
+                                });
+
+                                foreach (var acc in removed)
+                                {
+                                    if (acc != pName.ToLower())
+                                    {
+                                        KickAccount(acc, "✨ Celestial Seal severed: You are no longer in the Discord server or lack the required role.");
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            _mainThreadActions.Enqueue(() =>
+                            {
+                                var onlinePlayer = TShock.Players[pIndex];
+                                // TOCTOU check: Ensure player slot hasn't been recycled
+                                if (onlinePlayer != null && onlinePlayer.Active && onlinePlayer.Name == pName && onlinePlayer.UUID == pUuid)
+                                {
+                                    _limboPlayers.TryRemove(pIndex, out _);
+                                    onlinePlayer.GodMode = false;
+                                    onlinePlayer.mute = false;
+                                    onlinePlayer.SetBuff(163, 0, true);
+
+                                    if (newlyHashedUuid != null)
+                                    {
+                                        _ = _db.SaveSealAsync(new MetatronRecord(record.AccountName, record.DiscordId, newlyHashedUuid));
+                                    }
+
+                                    if (_config.EnableFrictionlessAuth) { var acc = TShock.UserAccounts.GetUserAccountByName(pName); if (acc != null) onlinePlayer.Account = acc; }
                                 }
                             });
                         }
@@ -284,12 +300,13 @@ public class GatekeeperService
         var player = TShock.Players[args.Who];
         if (player == null || !player.Active) return;
 
-        if (_limboPlayers.ContainsKey(player.Index))
+        int pIndex = player.Index;
+        string pName = player.Name;
+        string pUuid = player.UUID;
+
+        _mainThreadActions.Enqueue(() =>
         {
-            int pIndex = player.Index;
-            string pName = player.Name;
-            string pUuid = player.UUID;
-            _mainThreadActions.Enqueue(() =>
+            if (_limboPlayers.ContainsKey(pIndex))
             {
                 var current = TShock.Players[pIndex];
                 if (current != null && current.Active && current.Name == pName && current.UUID == pUuid)
@@ -297,15 +314,18 @@ public class GatekeeperService
                     current.GodMode = true; current.SetBuff(163, 360000, true); current.mute = true;
                     current.SendMessage(_config.Strings.LimboMessage, Color.White);
                 }
-            });
-        }
+            }
+        });
     }
 
     private void VerifyCommand(CommandArgs args)
     {
         if (!_limboPlayers.ContainsKey(args.Player.Index)) { args.Player.SendInfoMessage("Already verified."); return; }
 
-        if (string.IsNullOrWhiteSpace(args.Player.Name) || string.IsNullOrWhiteSpace(args.Player.UUID))
+        string? pName = args.Player.Name;
+        string? pUuid = args.Player.UUID;
+
+        if (string.IsNullOrWhiteSpace(pName) || string.IsNullOrWhiteSpace(pUuid))
         {
             args.Player.SendErrorMessage("Invalid player state. Please reconnect.");
             return;
@@ -345,7 +365,7 @@ public class GatekeeperService
             return;
         }
 
-        if (_db.Ledger.TryGetValue(args.Player.Name.ToLower(), out var record))
+        if (_db.Ledger.TryGetValue(pName.ToLower(), out var record))
         {
             if (record.DiscordId != data.DiscordId && !args.Player.IsLoggedIn)
             {
@@ -353,7 +373,7 @@ public class GatekeeperService
                 return;
             }
         }
-        else if (TShock.UserAccounts.GetUserAccountByName(args.Player.Name) != null && !args.Player.IsLoggedIn)
+        else if (TShock.UserAccounts.GetUserAccountByName(pName) != null && !args.Player.IsLoggedIn)
         {
             args.Player.SendErrorMessage("This account already exists. Log in with your password first before linking to Discord.");
             return;
@@ -362,8 +382,6 @@ public class GatekeeperService
         _verifyStrikes.TryRemove(ip, out _);
 
         int pIndex = args.Player.Index;
-        string pName = args.Player.Name;
-        string pUuid = args.Player.UUID;
         var pAccount = args.Player.Account;
 
         _ = Task.Run(() => FinalizeLinkage(pIndex, pName, pUuid, pAccount, data.DiscordId));
@@ -498,7 +516,11 @@ public class GatekeeperService
     {
         _mainThreadActions.Enqueue(() =>
         {
-            TShock.Players.FirstOrDefault(p => p?.Account?.Name?.ToLower() == accountName)?.Disconnect(reason);
+            var sessions = TShock.Players.Where(p => p?.Account?.Name?.ToLower() == accountName).ToList();
+            foreach (var session in sessions)
+            {
+                session?.Disconnect(reason);
+            }
         });
     }
 

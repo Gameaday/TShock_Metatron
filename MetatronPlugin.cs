@@ -107,7 +107,12 @@ public class MetatronPlugin : TerrariaPlugin
         if (args.Parameters.Count == 0) { args.Player.SendErrorMessage("Usage: /meta <reload | check | unlink | whois>"); return; }
         string cmd = args.Parameters[0].ToLower();
 
-        if (cmd == "reload") { LoadConfig(); args.Player.SendSuccessMessage("[Metatron] Core Config reloaded."); }
+        if (cmd == "reload")
+        {
+            LoadConfig();
+            TShock.Log.ConsoleInfo($"[Audit] Admin {args.Player.Name} executed /meta reload.");
+            args.Player.SendSuccessMessage("[Metatron] Core Config reloaded.");
+        }
         else if (cmd == "whois" && args.Parameters.Count > 1)
         {
             string target = string.Join(" ", args.Parameters.Skip(1)).ToLower();
@@ -119,6 +124,7 @@ public class MetatronPlugin : TerrariaPlugin
         {
             string targetName = string.Join(" ", args.Parameters.Skip(1)).ToLower();
             if (_database?.Ledger.TryGetValue(targetName, out var record) == true) {
+                TShock.Log.ConsoleInfo($"[Audit] Admin {args.Player.Name} administratively severed seal for {targetName}.");
                 _ = Task.Run(async () =>
                 {
                     if (_database != null)
