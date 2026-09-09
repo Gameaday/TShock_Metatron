@@ -181,6 +181,11 @@ public class GatekeeperService
                 player.SendErrorMessage($"Invalid PIN. Attempts remaining: {5 - currentStrikes}");
                 args.Handled = true;
             }
+            else
+            {
+                // Allow non-PIN PasswordSend packets to fall through to native TShock login handling
+                // This prevents a deadlock where existing users cannot link their Discord because they are blocked from logging in.
+            }
             // Fix: Do not set args.Handled = true for non-PIN guesses.
             // If it is a legitimate password, it needs to fall through to TShock's native handling.
         }
