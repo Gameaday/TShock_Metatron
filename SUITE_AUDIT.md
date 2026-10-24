@@ -35,11 +35,11 @@ Either way, its README is now a proper design doc rather than a raw AI conversat
 
 | Gap | Fix |
 |---|---|
-| Only Havoc has release CI | Port Havoc's workflow to Herald, Cerberus, Metatron |
+| Release CI *(corrected 2026-10-24: all three built plugins have CI + tag-release workflows; Herald's release workflow was hiding in `build.yml`, now renamed `release.yaml`)* | Cerberus is the remaining gap — local `build.sh` but no CI release workflow; add one at suite-phase start |
 | Repo naming mixes `TShock_Herald` (underscore) and `TShock-Cerberus` (hyphen) | Standardize display names: Havoc, Herald, Cerberus, Chronicle, Metatron; renaming repos is breaking — fix in docs/branding, not repo names |
 | "Chronical" is a misspelling of "Chronicle" (its own design doc says Chronicle) | Use **Chronicle** in all display text going forward |
-| Havoc README carries its own roadmap section | Point READMEs at each repo's ROADMAP.md — one planning surface |
-| Cerberus README has a broken code fence in Installation | Fix during next touch |
+| ~~Havoc README roadmap section~~ *(fixed 2026-10-24 — now "Feature Ideas (post-v1)" pointing at ROADMAP.md)* | — |
+| ~~Cerberus README broken code fence~~ *(fixed 2026-10-24 — installation completed, fences repaired, tree aligned to real layout)* | — |
 | No example broadcast pack for Herald | Ship `Broadcasts/examples/` — first-run experience matters for a config-heavy plugin |
 
 ## The suite story (for marketing)
